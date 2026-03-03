@@ -41,6 +41,7 @@ strategy:
 
 evaluation:
   walk_forward_type: "expanding"
+  horizons: [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180]
 
 output:
   figures_dir:     "reports/figures"

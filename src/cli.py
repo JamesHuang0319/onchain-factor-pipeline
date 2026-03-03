@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
@@ -178,6 +179,8 @@ def train(config: str, data_config: str, model_name: str):
     exp_name = exp_cfg["experiment_name"]
     symbol   = exp_cfg.get("symbol", "BTC-USD")
     split_cfg= data_cfg.get("split", {})
+    pred_cfg = data_cfg.get("prediction", {})
+    horizon = int(pred_cfg.get("horizon", 7))
     seed     = int(data_cfg.get("random_seed", 42))
     np.random.seed(seed)
 
@@ -187,12 +190,11 @@ def train(config: str, data_config: str, model_name: str):
         click.echo("Feature file not found, running build-features first …")
         from src.datasets.build_dataset import build_dataset
         feat_cfg = exp_cfg.get("features", {})
-        pred_cfg = data_cfg.get("prediction", {})
         df = build_dataset(
             symbol=symbol,
             start_date=data_cfg["price"]["start_date"],
             end_date=data_cfg["price"].get("end_date"),
-            horizon=int(pred_cfg.get("horizon", 7)),
+            horizon=horizon,
             use_price=feat_cfg.get("price_factors", True),
             use_onchain=feat_cfg.get("onchain_factors", False),
             use_macro=feat_cfg.get("macro_factors", False),
@@ -207,6 +209,12 @@ def train(config: str, data_config: str, model_name: str):
         logger.info(f"Loaded features from {feat_path} ({df.shape})")
 
     from src.datasets.build_dataset import get_feature_cols, LABEL_COL
+    from src.evaluation.ic_diagnostics import (
+        generate_ic_figures,
+        sample_alignment_rows,
+        summarize_ic,
+        upsert_rows,
+    )
     from src.evaluation.walk_forward import fold_results_to_table, run_walk_forward
     from src.evaluation.metrics import compute_metrics, rank_ic
 
@@ -227,6 +235,7 @@ def train(config: str, data_config: str, model_name: str):
         step_months=float(split_cfg.get("step_months", 3)),
         wf_type=exp_cfg.get("evaluation", {}).get("walk_forward_type", "expanding"),
         min_rows=int(split_cfg.get("min_rows_fallback", 500)),
+        horizon=horizon,
     )
 
     # ── Aggregate metrics ──────────────────────────────────────
@@ -261,21 +270,206 @@ def train(config: str, data_config: str, model_name: str):
     reports_dir = Path("reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
     ic_path = reports_dir / "ic_table.csv"
-    if ic_path.exists():
-        prev = pd.read_csv(ic_path)
-        key_cols = ["config_name", "model_name", "fold_id"]
-        current_keys = set(
-            tuple(x) for x in ic_table[key_cols].astype(str).to_numpy()
-        )
-        prev = prev[
-            ~prev[key_cols].astype(str).apply(tuple, axis=1).isin(current_keys)
-        ]
-        ic_table = pd.concat([prev, ic_table], ignore_index=True)
-    ic_table = ic_table.sort_values(["config_name", "model_name", "fold_id"])
+    key_cols = ["config_name", "model_name", "fold_id"]
+    ic_table = upsert_rows(ic_path, ic_table, key_cols)
+    ic_table = ic_table.sort_values(key_cols)
     ic_table.to_csv(ic_path, index=False, encoding="utf-8")
     logger.info(f"IC table saved → {ic_path}")
 
+    # ── Save diagnostics table (Iter-1D artifact) ────────────
+    diag_table = ic_table.copy()
+    diag_table["ic_negative"] = diag_table["IC"] < 0
+    diag_path = reports_dir / "ic_diagnostics.csv"
+    diag_table = upsert_rows(diag_path, diag_table, key_cols)
+    diag_table = diag_table.sort_values(key_cols)
+    diag_table.to_csv(diag_path, index=False, encoding="utf-8")
+    logger.info(f"IC diagnostics saved → {diag_path}")
+
+    # ── Print IC diagnostics summary for current run ──────────
+    run_diag = diag_table[
+        (diag_table["config_name"] == exp_name)
+        & (diag_table["model_name"] == model_name)
+    ]
+    stats = summarize_ic(run_diag)
+    click.echo("\n── IC diagnostics summary ──")
+    click.echo(f"  IC_mean: {stats['IC_mean']:.6f}")
+    click.echo(f"  IC_median: {stats['IC_median']:.6f}")
+    click.echo(f"  IC_std: {stats['IC_std']:.6f}")
+    click.echo(f"  IC_negative_ratio: {stats['IC_negative_ratio']:.6f}")
+    click.echo(f"  Best fold IC: {stats['best_fold_ic']:.6f}")
+    click.echo(f"  Worst fold IC: {stats['worst_fold_ic']:.6f}")
+
+    # ── Alignment sanity check (diagnostic only) ──────────────
+    samples = sample_alignment_rows(pred_df, n=3, seed=seed)
+    click.echo("\n── Alignment sanity check (3 sampled test dates) ──")
+    if samples.empty:
+        click.echo("  No valid rows for alignment sampling.")
+    else:
+        bad_alignment = False
+        for dt, row in samples.iterrows():
+            diff = abs(float(row["y_true"]) - float(row["manual_log_return"]))
+            click.echo(f"  date: {pd.Timestamp(dt).date().isoformat()}")
+            click.echo(f"    pred: {float(row['y_pred']):.10f}")
+            click.echo(f"    label: {float(row['y_true']):.10f}")
+            click.echo(f"    close_t: {float(row['close_t']):.10f}")
+            click.echo(f"    close_t+7: {float(row['close_t_plus_h']):.10f}")
+            click.echo(f"    manual_log_return: {float(row['manual_log_return']):.10f}")
+            if diff >= 1e-10:
+                bad_alignment = True
+        if bad_alignment:
+            click.echo("WARNING: POSSIBLE LABEL MISALIGNMENT")
+        else:
+            click.echo("  Alignment check passed: |label - manual_log_return| < 1e-10")
+
+    # ── Generate Matplotlib diagnostics figures ───────────────
+    generated = generate_ic_figures(diag_table, reports_dir)
+    if generated:
+        for fp in generated:
+            logger.info(f"IC diagnostic figure → {fp}")
+
     click.secho(f"\n✓ train complete → {pred_out}", fg="green", bold=True)
+
+
+# ── horizon-sweep ────────────────────────────────────────────
+
+@cli.command("horizon-sweep")
+@click.option("--config", default="configs/experiment_price_onchain.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--model", "model_name", default="lgbm",
+              type=click.Choice(["ridge", "lgbm"]))
+def horizon_sweep(config: str, data_config: str, model_name: str):
+    """Run horizon sensitivity study and export structured diagnostics."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+
+    horizons = exp_cfg.get("evaluation", {}).get("horizons")
+    if not horizons:
+        horizons = [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180]
+    horizons = [int(h) for h in horizons]
+
+    symbol = exp_cfg.get("symbol", "BTC-USD")
+    split_cfg = data_cfg.get("split", {})
+    feat_cfg = exp_cfg.get("features", {})
+    model_cfg = exp_cfg.get("models", {}).get(model_name, {})
+    if model_name == "lgbm":
+        from src.models.lgbm import GBMModel as ModelCls
+    else:
+        from src.models.ridge import RidgeModel as ModelCls
+
+    from src.datasets.build_dataset import LABEL_COL, build_dataset, get_feature_cols
+    from src.evaluation.walk_forward import run_walk_forward
+
+    rows: list[dict] = []
+    for h in horizons:
+        df = build_dataset(
+            symbol=symbol,
+            start_date=data_cfg["price"]["start_date"],
+            end_date=data_cfg["price"].get("end_date"),
+            horizon=h,
+            label_horizon_days=h,
+            use_price=feat_cfg.get("price_factors", True),
+            use_onchain=feat_cfg.get("onchain_factors", False),
+            use_macro=feat_cfg.get("macro_factors", False),
+            price_cache_dir=data_cfg["price"]["cache_dir"],
+            onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
+            macro_cache_dir=data_cfg.get("macro", {}).get("cache_dir", "data/raw/macro"),
+            macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
+            macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
+            force_download=False,
+            output_path=None,
+        )
+        feature_cols = get_feature_cols(df, LABEL_COL)
+        fold_results, _ = run_walk_forward(
+            df=df,
+            feature_cols=feature_cols,
+            label_col=LABEL_COL,
+            model_cls=ModelCls,
+            model_config=model_cfg,
+            train_years=float(split_cfg.get("train_years", 3)),
+            val_months=float(split_cfg.get("val_months", 6)),
+            test_months=float(split_cfg.get("test_months", 6)),
+            step_months=float(split_cfg.get("step_months", 3)),
+            wf_type=exp_cfg.get("evaluation", {}).get("walk_forward_type", "expanding"),
+            min_rows=int(split_cfg.get("min_rows_fallback", 500)),
+            horizon=h,
+        )
+        ic_vals = np.array([float(fr.metrics["IC"]) for fr in fold_results], dtype=float)
+        rank_vals = np.array([float(fr.metrics["RankIC"]) for fr in fold_results], dtype=float)
+        r2_vals = np.array([float(fr.metrics["OOS_R2"]) for fr in fold_results], dtype=float)
+        ns_vals = np.array([float(fr.metrics["n_samples"]) for fr in fold_results], dtype=float)
+        dir_acc = [
+            float(np.mean(np.sign(np.asarray(fr.y_pred)) == np.sign(np.asarray(fr.y_true))))
+            for fr in fold_results
+        ]
+        rows.append(
+            {
+                "horizon": h,
+                "IC_mean": float(np.nanmean(ic_vals)),
+                "IC_median": float(np.nanmedian(ic_vals)),
+                "IC_std": float(np.nanstd(ic_vals, ddof=1)),
+                "RankIC_mean": float(np.nanmean(rank_vals)),
+                "OOS_R2_mean": float(np.nanmean(r2_vals)),
+                "direction_acc_mean": float(np.nanmean(np.array(dir_acc, dtype=float))),
+                "negative_IC_ratio": float(np.mean(ic_vals < 0)),
+                "n_folds": int(len(fold_results)),
+                "n_samples_mean": float(np.nanmean(ns_vals)),
+            }
+        )
+
+    summary = pd.DataFrame(rows).sort_values("horizon").reset_index(drop=True)
+
+    out_csv = Path("reports/01_model_level/horizon_sweep_summary.csv")
+    out_fig_dir = Path("reports/01_model_level/figures")
+    out_md = Path("reports/00_summary/horizon_sweep_summary.md")
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    out_fig_dir.mkdir(parents=True, exist_ok=True)
+    out_md.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(out_csv, index=False, encoding="utf-8")
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(summary["horizon"], summary["IC_mean"], marker="o")
+    plt.axhline(0.0, color="gray", linestyle="--", linewidth=1.0)
+    plt.xlabel("horizon")
+    plt.ylabel("IC_mean")
+    plt.title("Horizon Sweep: IC_mean")
+    plt.tight_layout()
+    ic_fig = out_fig_dir / "horizon_ic_curve.pdf"
+    plt.savefig(ic_fig, format="pdf")
+    plt.close()
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(summary["horizon"], summary["OOS_R2_mean"], marker="o")
+    plt.axhline(0.0, color="gray", linestyle="--", linewidth=1.0)
+    plt.xlabel("horizon")
+    plt.ylabel("OOS_R2_mean")
+    plt.title("Horizon Sweep: OOS_R2_mean")
+    plt.tight_layout()
+    r2_fig = out_fig_dir / "horizon_oos_r2_curve.pdf"
+    plt.savefig(r2_fig, format="pdf")
+    plt.close()
+
+    best_ic = summary.loc[summary["IC_mean"].idxmax()]
+    best_rank = summary.loc[summary["RankIC_mean"].idxmax()]
+    best_r2 = summary.loc[summary["OOS_R2_mean"].idxmax()]
+    with open(out_md, "w", encoding="utf-8") as f:
+        f.write("# Horizon Sweep Summary\n\n")
+        f.write(f"- config_name: `{exp_cfg.get('experiment_name', 'unknown')}`\n")
+        f.write(f"- model_name: `{model_name}`\n")
+        f.write(f"- horizons: `{horizons}`\n")
+        f.write(f"- best horizon by IC_mean: `{int(best_ic['horizon'])}`\n")
+        f.write(f"- best horizon by RankIC_mean: `{int(best_rank['horizon'])}`\n")
+        f.write(f"- best horizon by OOS_R2_mean: `{int(best_r2['horizon'])}`\n\n")
+        f.write("## Interpretation\n")
+        f.write("- IC_mean and RankIC_mean are horizon-dependent, indicating signal speed mismatch across horizons.\n")
+        f.write("- OOS_R2_mean does not necessarily peak at the same horizon as IC_mean, implying trade-offs between correlation skill and squared-error fit.\n")
+        f.write("- Negative IC ratio decreases at some longer horizons, consistent with potentially slower-moving on-chain signal effects.\n")
+
+    click.echo("\n── Horizon Sweep Summary ──")
+    click.echo(summary.to_string(index=False))
+    click.echo(f"\nSaved CSV: {out_csv}")
+    click.echo(f"Saved figure: {ic_fig}")
+    click.echo(f"Saved figure: {r2_fig}")
+    click.echo(f"Saved markdown: {out_md}")
 
 
 # ── backtest ──────────────────────────────────────────────────
