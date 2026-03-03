@@ -28,43 +28,63 @@ def compute_onchain_factors(df: pd.DataFrame) -> pd.DataFrame:
     Caller merges this with the price factor DataFrame.
     """
     out = pd.DataFrame(index=df.index)
+    out.index = pd.to_datetime(out.index, utc=True).normalize()
 
-    def _safe_col(name: str) -> pd.Series | None:
-        """Return column Series or None if not present."""
-        return df[name] if name in df.columns else None
+    metric_prefix = {
+        "n-transactions": "ntx",
+        "n-unique-addresses": "addr",
+        "transaction-fees": "fees",
+        "estimated-transaction-volume": "txvol",
+        "mempool-size": "mempool",
+        "miners-revenue": "mrev",
+        "cost-per-transaction": "cptx",
+        "hash-rate": "hr",
+        "difficulty": "diff",
+    }
 
-    # ── n-transactions ──────────────────────────────────────
-    ntx = _safe_col("n-transactions")
-    if ntx is not None:
-        out["ntx_pct_1d"]   = ntx.pct_change(1)
-        out["ntx_pct_7d"]   = ntx.pct_change(7)
-        out["ntx_ma7_dev"]  = ntx / ntx.rolling(7,  min_periods=4).mean() - 1
-        out["ntx_ma30_dev"] = ntx / ntx.rolling(30, min_periods=15).mean() - 1
+    def _zscore(x: pd.Series, window: int, min_periods: int) -> pd.Series:
+        mean = x.rolling(window, min_periods=min_periods).mean()
+        std = x.rolling(window, min_periods=min_periods).std()
+        return (x - mean) / std.replace(0, np.nan)
 
-    # ── n-unique-addresses ──────────────────────────────────
-    addr = _safe_col("n-unique-addresses")
-    if addr is not None:
-        out["addr_pct_1d"]  = addr.pct_change(1)
-        out["addr_pct_7d"]  = addr.pct_change(7)
-        out["addr_ma7_dev"] = addr / addr.rolling(7, min_periods=4).mean() - 1
+    for metric, prefix in metric_prefix.items():
+        if metric not in df.columns:
+            continue
+        s = pd.to_numeric(df[metric], errors="coerce")
+        s_pos = s.clip(lower=0)
+        ma7 = s.rolling(7, min_periods=4).mean().replace(0, np.nan)
 
-    # ── hash-rate ───────────────────────────────────────────
-    hr = _safe_col("hash-rate")
-    if hr is not None:
-        out["hashrate_pct_7d"]   = hr.pct_change(7)
-        out["hashrate_ma14_dev"] = hr / hr.rolling(14, min_periods=7).mean() - 1
+        out[f"{prefix}_log1p"] = np.log1p(s_pos)
+        out[f"{prefix}_pct_1d"] = s.pct_change(1)
+        out[f"{prefix}_pct_7d"] = s.pct_change(7)
+        out[f"{prefix}_ma7_dev"] = s / ma7 - 1
+        out[f"{prefix}_z30"] = _zscore(s, window=30, min_periods=15)
 
-    # ── difficulty ──────────────────────────────────────────
-    diff = _safe_col("difficulty")
-    if diff is not None:
-        out["diff_pct_14d"]    = diff.pct_change(14)
-        out["diff_ma30_dev"]   = diff / diff.rolling(30, min_periods=15).mean() - 1
+    ntx = df["n-transactions"] if "n-transactions" in df.columns else None
+    addr = df["n-unique-addresses"] if "n-unique-addresses" in df.columns else None
+    fees = df["transaction-fees"] if "transaction-fees" in df.columns else None
+    txvol = (
+        df["estimated-transaction-volume"]
+        if "estimated-transaction-volume" in df.columns
+        else None
+    )
+    mrev = df["miners-revenue"] if "miners-revenue" in df.columns else None
+    hr = df["hash-rate"] if "hash-rate" in df.columns else None
+    diff = df["difficulty"] if "difficulty" in df.columns else None
 
-    # ── Cross-metric: miner revenue proxy ───────────────────
-    # hash-rate / difficulty indicates miner efficiency signal
+    if ntx is not None and addr is not None:
+        out["tx_per_addr"] = ntx / addr.replace(0, np.nan)
+        out["tx_per_addr_pct_7d"] = out["tx_per_addr"].pct_change(7)
+    if fees is not None and ntx is not None:
+        out["fees_per_tx"] = fees / ntx.replace(0, np.nan)
+        out["fees_per_tx_z30"] = _zscore(out["fees_per_tx"], window=30, min_periods=15)
+    if txvol is not None and fees is not None:
+        out["fees_txvol_ratio"] = fees / txvol.replace(0, np.nan)
+    if mrev is not None and hr is not None:
+        out["mrev_per_hash"] = mrev / hr.replace(0, np.nan)
     if hr is not None and diff is not None:
-        # Avoid division by zero
         out["hr_diff_ratio"] = hr / diff.replace(0, np.nan)
-        out["hr_diff_pct_7d"] = out["hr_diff_ratio"].pct_change(7)
+        out["hr_diff_ratio_pct_7d"] = out["hr_diff_ratio"].pct_change(7)
 
+    out = out[~out.index.duplicated(keep="last")].sort_index()
     return out

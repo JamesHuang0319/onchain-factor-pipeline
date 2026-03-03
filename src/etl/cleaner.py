@@ -70,7 +70,15 @@ def clean_onchain(df: pd.DataFrame, ffill_limit: int = 7) -> pd.DataFrame:
     df = df[~df.index.duplicated(keep="last")]
 
     # Forward-fill (backward is forbidden – it uses future data!)
+    observed = df.notna()
     df = df.ffill(limit=ffill_limit)
+
+    # Keep pre-second-observation gaps as NaN for each column.
+    # This prevents filling immediately after the very first print.
+    for col in df.columns:
+        seen = observed[col].cumsum()
+        mask = (~observed[col]) & (seen <= 1)
+        df.loc[mask, col] = np.nan
     return df
 
 
@@ -100,10 +108,11 @@ def align_and_merge(
     merged = price_df.copy()
 
     if onchain_df is not None:
-        # Reindex to price calendar, forward-fill (safe: only past data)
+        # Reindex to price calendar first, then forward-fill (safe: only past data).
         onchain_aligned = (
             onchain_df
-            .reindex(merged.index, method="ffill")
+            .reindex(merged.index)
+            .sort_index()
             .ffill(limit=ffill_onchain)
         )
         merged = pd.concat([merged, onchain_aligned], axis=1)
@@ -111,7 +120,8 @@ def align_and_merge(
     if macro_df is not None:
         macro_aligned = (
             macro_df
-            .reindex(merged.index, method="ffill")
+            .reindex(merged.index)
+            .sort_index()
             .ffill(limit=ffill_macro)
         )
         merged = pd.concat([merged, macro_aligned], axis=1)
