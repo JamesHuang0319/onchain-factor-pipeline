@@ -15,6 +15,11 @@ onchain:
   metrics:
     - "n-transactions"
     - "n-unique-addresses"
+    - "transaction-fees"
+    - "estimated-transaction-volume"
+    - "mempool-size"
+    - "miners-revenue"
+    - "cost-per-transaction"
     - "hash-rate"
     - "difficulty"
   timespan:          "all"

@@ -31,6 +31,11 @@ RETRY_DELAYS = [1, 2, 4]  # seconds
 DEFAULT_METRICS = [
     "n-transactions",
     "n-unique-addresses",
+    "transaction-fees",
+    "estimated-transaction-volume",
+    "mempool-size",
+    "miners-revenue",
+    "cost-per-transaction",
     "hash-rate",
     "difficulty",
 ]
@@ -69,6 +74,7 @@ def download_onchain_metric(
         logger.info(f"[onchain] Loading from cache: {path}")
         df = pd.read_csv(path, index_col=0, parse_dates=True)
         df.index = pd.to_datetime(df.index, utc=True).normalize()
+        df = df[~df.index.duplicated(keep="last")].sort_index()
         return df
 
     # ── Network fetch with retry ───────────────────────────
