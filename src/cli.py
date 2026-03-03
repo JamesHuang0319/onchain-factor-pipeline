@@ -19,6 +19,7 @@ Example (3-command demo):
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import os
 import sys
@@ -77,6 +78,13 @@ def _resolve_model(model_name: str, model_cfg: dict):
         return GBMModel, model_cfg.get("lgbm", {})
     else:
         raise ValueError(f"Unknown model: {model_name}")
+
+
+def _run_walk_forward_compat(run_walk_forward_fn, **kwargs):
+    """Call run_walk_forward with backward-compatible kwargs."""
+    if "horizon" not in inspect.signature(run_walk_forward_fn).parameters:
+        kwargs.pop("horizon", None)
+    return run_walk_forward_fn(**kwargs)
 
 
 # ── CLI group ─────────────────────────────────────────────────
@@ -223,7 +231,8 @@ def train(config: str, data_config: str, model_name: str):
 
     ModelCls, model_cfg = _resolve_model(model_name, exp_cfg.get("models", {}))
 
-    fold_results, pred_df = run_walk_forward(
+    fold_results, pred_df = _run_walk_forward_compat(
+        run_walk_forward,
         df=df,
         feature_cols=feature_cols,
         label_col=LABEL_COL,
@@ -235,7 +244,6 @@ def train(config: str, data_config: str, model_name: str):
         step_months=float(split_cfg.get("step_months", 3)),
         wf_type=exp_cfg.get("evaluation", {}).get("walk_forward_type", "expanding"),
         min_rows=int(split_cfg.get("min_rows_fallback", 500)),
-        horizon=horizon,
     )
 
     # ── Aggregate metrics ──────────────────────────────────────
@@ -379,7 +387,8 @@ def horizon_sweep(config: str, data_config: str, model_name: str):
             output_path=None,
         )
         feature_cols = get_feature_cols(df, LABEL_COL)
-        fold_results, _ = run_walk_forward(
+        fold_results, _ = _run_walk_forward_compat(
+            run_walk_forward,
             df=df,
             feature_cols=feature_cols,
             label_col=LABEL_COL,
@@ -391,7 +400,6 @@ def horizon_sweep(config: str, data_config: str, model_name: str):
             step_months=float(split_cfg.get("step_months", 3)),
             wf_type=exp_cfg.get("evaluation", {}).get("walk_forward_type", "expanding"),
             min_rows=int(split_cfg.get("min_rows_fallback", 500)),
-            horizon=h,
         )
         ic_vals = np.array([float(fr.metrics["IC"]) for fr in fold_results], dtype=float)
         rank_vals = np.array([float(fr.metrics["RankIC"]) for fr in fold_results], dtype=float)
@@ -603,6 +611,168 @@ def feature_horizon_matrix(config: str, data_config: str, topk: int):
     click.echo(f"Saved CSV: {out_csv}")
     click.echo(f"Saved figure: {heatmap_path}")
     click.echo(f"Saved markdown: {out_md}")
+
+
+# ── stability-regime ────────────────────────────────────────
+
+@cli.command("stability-regime")
+@click.option("--config", default="configs/experiment_price_onchain.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--model", "model_name", default="lgbm",
+              type=click.Choice(["ridge", "lgbm"]))
+@click.option("--rolling-window", default=180, type=int)
+def stability_regime(
+    config: str, data_config: str, model_name: str, rolling_window: int
+):
+    """Run rolling stability and market-regime diagnostics."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+    split_cfg = data_cfg.get("split", {})
+    symbol = exp_cfg.get("symbol", "BTC-USD")
+    feat_cfg = exp_cfg.get("features", {})
+    pred_cfg = data_cfg.get("prediction", {})
+    horizon = int(pred_cfg.get("horizon", 7))
+
+    from src.datasets.build_dataset import LABEL_COL, build_dataset, get_feature_cols
+    from src.evaluation.metrics import ic, rank_ic
+    from src.evaluation.walk_forward import run_walk_forward
+
+    ModelCls, model_cfg = _resolve_model(model_name, exp_cfg.get("models", {}))
+    df = build_dataset(
+        symbol=symbol,
+        start_date=data_cfg["price"]["start_date"],
+        end_date=data_cfg["price"].get("end_date"),
+        horizon=horizon,
+        label_horizon_days=horizon,
+        use_price=feat_cfg.get("price_factors", True),
+        use_onchain=feat_cfg.get("onchain_factors", False),
+        use_macro=feat_cfg.get("macro_factors", False),
+        price_cache_dir=data_cfg["price"]["cache_dir"],
+        onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
+        macro_cache_dir=data_cfg.get("macro", {}).get("cache_dir", "data/raw/macro"),
+        macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
+        macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
+        force_download=False,
+        output_path=None,
+    )
+    feature_cols = get_feature_cols(df, LABEL_COL)
+    _, pred_df = _run_walk_forward_compat(
+        run_walk_forward,
+        df=df,
+        feature_cols=feature_cols,
+        label_col=LABEL_COL,
+        model_cls=ModelCls,
+        model_config=model_cfg,
+        train_years=float(split_cfg.get("train_years", 3)),
+        val_months=float(split_cfg.get("val_months", 6)),
+        test_months=float(split_cfg.get("test_months", 6)),
+        step_months=float(split_cfg.get("step_months", 3)),
+        wf_type=exp_cfg.get("evaluation", {}).get("walk_forward_type", "expanding"),
+        min_rows=int(split_cfg.get("min_rows_fallback", 500)),
+    )
+
+    # Rolling stability
+    pred_df = pred_df.sort_index().copy()
+    roll_ic = pred_df["y_true"].rolling(rolling_window).corr(pred_df["y_pred"])
+    roll_rank = (
+        pred_df["y_true"]
+        .rolling(rolling_window)
+        .corr(pred_df["y_pred"].rank())
+    )
+    rolling_df = pd.DataFrame(
+        {
+            "date": pred_df.index,
+            "rolling_IC": roll_ic.values,
+            "rolling_RankIC": roll_rank.values,
+        }
+    ).dropna()
+
+    # Regime analysis (bull/bear by trailing return, high/low vol by rolling vol median)
+    ret = pred_df["y_true"]
+    vol = ret.rolling(rolling_window).std()
+    vol_med = float(vol.median(skipna=True))
+    regime_rows: list[dict] = []
+    regimes = {
+        "bull_high_vol": (ret > 0) & (vol >= vol_med),
+        "bull_low_vol": (ret > 0) & (vol < vol_med),
+        "bear_high_vol": (ret <= 0) & (vol >= vol_med),
+        "bear_low_vol": (ret <= 0) & (vol < vol_med),
+    }
+    for name, mask in regimes.items():
+        sub = pred_df.loc[mask].dropna(subset=["y_true", "y_pred"])
+        if len(sub) < 20:
+            regime_rows.append(
+                {"regime": name, "IC": np.nan, "RankIC": np.nan, "n_samples": int(len(sub))}
+            )
+            continue
+        regime_rows.append(
+            {
+                "regime": name,
+                "IC": float(ic(sub["y_true"].values, sub["y_pred"].values)),
+                "RankIC": float(rank_ic(sub["y_true"].values, sub["y_pred"].values)),
+                "n_samples": int(len(sub)),
+            }
+        )
+    regime_df = pd.DataFrame(regime_rows)
+
+    # Outputs
+    out_base = Path("reports/03_stability")
+    out_fig = out_base / "figures"
+    out_sum = Path("reports/00_summary/rolling_regime_summary.md")
+    out_base.mkdir(parents=True, exist_ok=True)
+    out_fig.mkdir(parents=True, exist_ok=True)
+    out_sum.parent.mkdir(parents=True, exist_ok=True)
+
+    rolling_csv = out_base / "rolling_stability.csv"
+    regime_csv = out_base / "regime_analysis.csv"
+    rolling_df.to_csv(rolling_csv, index=False, encoding="utf-8")
+    regime_df.to_csv(regime_csv, index=False, encoding="utf-8")
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(pd.to_datetime(rolling_df["date"]), rolling_df["rolling_IC"], label="rolling_IC")
+    plt.axhline(0.0, color="gray", linestyle="--", linewidth=1.0)
+    plt.title(f"Rolling IC (window={rolling_window})")
+    plt.xlabel("date")
+    plt.ylabel("IC")
+    plt.tight_layout()
+    fig_roll = out_fig / "rolling_ic_curve.pdf"
+    plt.savefig(fig_roll, format="pdf")
+    plt.close()
+
+    plt.figure(figsize=(7, 4))
+    plt.bar(regime_df["regime"], regime_df["IC"])
+    plt.axhline(0.0, color="gray", linestyle="--", linewidth=1.0)
+    plt.xticks(rotation=20, ha="right")
+    plt.ylabel("IC")
+    plt.title("Regime IC Comparison")
+    plt.tight_layout()
+    fig_regime = out_fig / "regime_ic_bar.pdf"
+    plt.savefig(fig_regime, format="pdf")
+    plt.close()
+
+    best_regime = regime_df.dropna(subset=["IC"])
+    best_regime_name = (
+        best_regime.loc[best_regime["IC"].idxmax(), "regime"]
+        if not best_regime.empty else "unknown"
+    )
+    with open(out_sum, "w", encoding="utf-8") as f:
+        f.write("# Rolling Stability + Regime Summary\n\n")
+        f.write(f"- config_name: `{exp_cfg.get('experiment_name', 'unknown')}`\n")
+        f.write(f"- model_name: `{model_name}`\n")
+        f.write(f"- rolling_window: `{rolling_window}`\n")
+        f.write(f"- best regime by IC: `{best_regime_name}`\n")
+        f.write(f"- rolling rows: `{len(rolling_df)}`\n\n")
+        f.write("## Interpretation\n")
+        f.write("- Rolling IC varies over time, indicating temporal instability in predictive signal strength.\n")
+        f.write("- Regime-level IC differences suggest conditional predictability across volatility/trend states.\n")
+        f.write("- Stability diagnostics should be combined with horizon and feature diagnostics before strategy claims.\n")
+
+    click.echo("\n── Rolling Stability + Regime Diagnostics ──")
+    click.echo(f"Saved CSV: {rolling_csv}")
+    click.echo(f"Saved CSV: {regime_csv}")
+    click.echo(f"Saved figure: {fig_roll}")
+    click.echo(f"Saved figure: {fig_regime}")
+    click.echo(f"Saved markdown: {out_sum}")
 
 
 # ── backtest ──────────────────────────────────────────────────
