@@ -18,6 +18,8 @@ models_saved/
 reports/figures/
 reports/trading/
 reports/summary.md
+reports/*
+!reports/.gitkeep
 
 # ── IDE / Editor ──────────────────────────────────
 .vscode/
