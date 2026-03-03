@@ -1,0 +1,47 @@
+# configs/experiment_price_onchain.yaml
+# ──────────────────────────────────────────────────────────────
+# Iter-1: price + on-chain factors
+# ──────────────────────────────────────────────────────────────
+
+experiment_name:   "iter1_price_onchain"
+symbol:            "BTC-USD"
+feature_set:       "price_onchain"
+
+features:
+  price_factors:   true
+  onchain_factors: true
+  macro_factors:   false
+
+models:
+  ridge:
+    alpha:         1.0
+    fit_intercept: true
+    normalize_features: true
+
+  lgbm:
+    n_estimators:    500
+    learning_rate:   0.03
+    max_depth:       5
+    num_leaves:      63
+    min_child_samples: 20
+    subsample:       0.8
+    colsample_bytree: 0.7
+    reg_alpha:       0.1
+    reg_lambda:      1.0
+    random_state:    42
+    n_jobs:          -1
+
+strategy:
+  mode:            "long_only"
+  top_quantile:    0.2
+  bottom_quantile: 0.2
+  cost_bps:        [5, 10, 20]
+  default_cost_bps: 10
+
+evaluation:
+  walk_forward_type: "expanding"
+
+output:
+  figures_dir:     "reports/figures"
+  trading_dir:     "reports/trading"
+  model_dir:       "models_saved/iter1"

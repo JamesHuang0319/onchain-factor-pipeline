@@ -1,0 +1,47 @@
+# configs/experiment_price_only.yaml
+# ──────────────────────────────────────────────────────────────
+# Iter-0: price-only baseline experiment
+# ──────────────────────────────────────────────────────────────
+
+experiment_name:   "iter0_price_only"
+symbol:            "BTC-USD"
+feature_set:       "price"          # use only price factors
+
+features:
+  price_factors:   true
+  onchain_factors: false
+  macro_factors:   false
+
+models:
+  ridge:
+    alpha:         1.0
+    fit_intercept: true
+    normalize_features: true        # StandardScaler inside model
+
+  lgbm:
+    n_estimators:    300
+    learning_rate:   0.05
+    max_depth:       4
+    num_leaves:      31
+    min_child_samples: 20
+    subsample:       0.8
+    colsample_bytree: 0.8
+    reg_alpha:       0.1
+    reg_lambda:      1.0
+    random_state:    42
+    n_jobs:          -1
+
+strategy:
+  mode:            "long_only"      # "long_only" | "long_short"
+  top_quantile:    0.2              # top 20% long
+  bottom_quantile: 0.2             # bottom 20% short (long_short only)
+  cost_bps:        [5, 10, 20]     # sensitivity analysis
+  default_cost_bps: 10
+
+evaluation:
+  walk_forward_type: "expanding"    # "expanding" | "rolling"
+
+output:
+  figures_dir:     "reports/figures"
+  trading_dir:     "reports/trading"
+  model_dir:       "models_saved/iter0"

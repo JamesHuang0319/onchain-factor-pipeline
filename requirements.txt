@@ -1,0 +1,35 @@
+# ============================================================
+# crypto_predict – requirements.txt
+# Python >= 3.10
+# ============================================================
+
+# --- Core data & ML ---
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+scipy>=1.12
+
+# --- Model backends (fallback chain: lgbm → xgboost → sklearn HGBR) ---
+lightgbm>=4.3          # primary
+xgboost>=2.0           # fallback-1
+
+# --- Data sources ---
+yfinance>=0.2.36
+requests>=2.31
+requests-cache>=1.2    # transparent HTTP caching
+pyarrow>=15.0          # parquet read/write (pandas dependency)
+
+# --- CLI & config ---
+click>=8.1
+pyyaml>=6.0
+
+# --- Visualization ---
+matplotlib>=3.8
+plotly>=5.20
+kaleido>=0.2.1         # plotly static export (optional)
+
+# --- Testing ---
+pytest>=8.0
+
+# --- Typing helpers ---
+typing-extensions>=4.9

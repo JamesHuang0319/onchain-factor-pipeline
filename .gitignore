@@ -1,0 +1,35 @@
+# ── Python ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Data (too large for git) ──────────────────────
+data/raw/
+data/features/
+
+# ── Model artifacts ───────────────────────────────
+models_saved/
+
+# ── Reports (generated, reproducible) ─────────────
+reports/figures/
+reports/trading/
+reports/summary.md
+
+# ── IDE / Editor ──────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Virtual environments ─────────────────────────
+.venv/
+venv/
+env/

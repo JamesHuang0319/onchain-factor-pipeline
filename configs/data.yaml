@@ -1,0 +1,40 @@
+# configs/data.yaml
+# ──────────────────────────────────────────────────────────────
+# Global data acquisition configuration.
+# All paths are relative to the project root.
+# ──────────────────────────────────────────────────────────────
+
+price:
+  symbols:           ["BTC-USD", "ETH-USD", "SOL-USD"]
+  start_date:        "2018-01-01"
+  end_date:          null          # null → today
+  cache_dir:         "data/raw/yfinance"
+  force_download:    false         # true → bypass cache
+
+onchain:
+  metrics:
+    - "n-transactions"
+    - "n-unique-addresses"
+    - "hash-rate"
+    - "difficulty"
+  timespan:          "all"
+  cache_dir:         "data/raw/blockchain"
+  force_download:    false
+
+macro:
+  release_lag_days:  1             # data available 1 day after release
+  cache_dir:         "data/raw/macro"
+  use_dummy:         true          # Iter-0/1: dummy data; Iter-2: set false
+
+prediction:
+  horizon:           7             # k=7 day forward log-return
+  target_col:        "log_ret_7d"
+
+split:
+  train_years:       3
+  val_months:        6
+  test_months:       6
+  step_months:       3
+  min_rows_fallback: 500          # if data < this, use 70/30 chronological
+
+random_seed:         42
