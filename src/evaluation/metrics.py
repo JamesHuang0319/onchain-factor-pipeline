@@ -33,6 +33,21 @@ def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mse(y_true, y_pred)))
 
 
+def oos_r2(y_true: np.ndarray, y_pred: np.ndarray, benchmark: np.ndarray) -> float:
+    """
+    Out-of-sample R^2 against a benchmark prediction.
+
+    OOS_R2 = 1 - SSE_model / SSE_benchmark
+    """
+    if len(y_true) == 0:
+        return float("nan")
+    sse_model = float(np.sum((y_true - y_pred) ** 2))
+    sse_bench = float(np.sum((y_true - benchmark) ** 2))
+    if sse_bench == 0:
+        return float("nan")
+    return float(1.0 - sse_model / sse_bench)
+
+
 def ic(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Pearson IC between predictions and realized returns."""
     if len(y_true) < 2:

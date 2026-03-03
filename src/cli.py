@@ -30,6 +30,19 @@ import numpy as np
 import pandas as pd
 import yaml
 
+
+def _force_utf8_runtime() -> None:
+    """Harden CLI runtime encoding on Windows before any file IO."""
+    if os.name == "nt":
+        os.environ.setdefault("PYTHONUTF8", "1")
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+_force_utf8_runtime()
+
 # ── Logging setup ─────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -41,7 +54,7 @@ logger = logging.getLogger("cli")
 # ── Helpers ───────────────────────────────────────────────────
 
 def _load_yaml(path: str) -> dict:
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig") as f:
         return yaml.safe_load(f)
 
 
@@ -194,7 +207,7 @@ def train(config: str, data_config: str, model_name: str):
         logger.info(f"Loaded features from {feat_path} ({df.shape})")
 
     from src.datasets.build_dataset import get_feature_cols, LABEL_COL
-    from src.evaluation.walk_forward import run_walk_forward
+    from src.evaluation.walk_forward import fold_results_to_table, run_walk_forward
     from src.evaluation.metrics import compute_metrics, rank_ic
 
     feature_cols = get_feature_cols(df, LABEL_COL)
@@ -236,8 +249,31 @@ def train(config: str, data_config: str, model_name: str):
 
     # ── Save metrics ───────────────────────────────────────────
     metrics_out = f"data/features/{exp_name}_{model_name}_metrics.json"
-    with open(metrics_out, "w") as f:
+    with open(metrics_out, "w", encoding="utf-8") as f:
         json.dump(all_metrics, f, indent=2)
+
+    # ── Save per-fold IC table (Iter-1C artifact) ─────────────
+    ic_table = fold_results_to_table(
+        fold_results=fold_results,
+        config_name=exp_name,
+        model_name=model_name,
+    )
+    reports_dir = Path("reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    ic_path = reports_dir / "ic_table.csv"
+    if ic_path.exists():
+        prev = pd.read_csv(ic_path)
+        key_cols = ["config_name", "model_name", "fold_id"]
+        current_keys = set(
+            tuple(x) for x in ic_table[key_cols].astype(str).to_numpy()
+        )
+        prev = prev[
+            ~prev[key_cols].astype(str).apply(tuple, axis=1).isin(current_keys)
+        ]
+        ic_table = pd.concat([prev, ic_table], ignore_index=True)
+    ic_table = ic_table.sort_values(["config_name", "model_name", "fold_id"])
+    ic_table.to_csv(ic_path, index=False, encoding="utf-8")
+    logger.info(f"IC table saved → {ic_path}")
 
     click.secho(f"\n✓ train complete → {pred_out}", fg="green", bold=True)
 
@@ -382,7 +418,7 @@ def report(config: str, data_config: str, model_name: str):
     metrics_path = f"data/features/{exp_name}_{model_name}_metrics.json"
     metrics = {}
     if Path(metrics_path).exists():
-        with open(metrics_path) as f:
+        with open(metrics_path, encoding="utf-8") as f:
             metrics = json.load(f)
 
     # ── Write markdown summary ─────────────────────────────────
@@ -395,7 +431,7 @@ def report(config: str, data_config: str, model_name: str):
 
     Path("reports").mkdir(exist_ok=True)
     summary_path = Path("reports/summary.md")
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         f.write(f"# Crypto Predict — Summary Report\n\n")
         f.write(f"**Experiment**: `{exp_name}`  \n")
         f.write(f"**Symbol**: `{symbol}`  \n")

@@ -22,7 +22,7 @@ from typing import Iterator, Optional
 import numpy as np
 import pandas as pd
 
-from src.evaluation.metrics import compute_metrics
+from src.evaluation.metrics import ic, mae, mse, oos_r2, rank_ic
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +228,17 @@ def run_walk_forward(
         model.fit(X_train, y_train, X_val, y_val)
         y_pred = model.predict(X_test)
 
-        metrics = compute_metrics(y_test, y_pred, prefix=f"fold{fold.fold_id}")
+        y_bench = np.full_like(y_test, fill_value=float(np.mean(y_train)), dtype=float)
+        metrics = {
+            "IC": ic(y_test, y_pred),
+            "RankIC": rank_ic(y_test, y_pred),
+            "OOS_R2": oos_r2(y_test, y_pred, y_bench),
+            "MAE": mae(y_test, y_pred),
+            "MSE": mse(y_test, y_pred),
+            "n_samples": float(len(y_test)),
+            "start_date": test_df.index.min(),
+            "end_date": test_df.index.max(),
+        }
 
         result = FoldResult(
             fold_id=fold.fold_id,
@@ -249,8 +259,8 @@ def run_walk_forward(
         logger.info(
             f"[walk_forward] Fold {fold.fold_id}: "
             f"train={len(train_df)}, test={len(test_df)}, "
-            f"MAE={metrics.get(f'fold{fold.fold_id}_mae', 'n/a'):.4f}, "
-            f"RankIC={metrics.get(f'fold{fold.fold_id}_rank_ic', 'n/a'):.4f}"
+            f"MAE={metrics['MAE']:.4f}, "
+            f"RankIC={metrics['RankIC']:.4f}"
         )
 
     if not pred_frames:
@@ -258,3 +268,30 @@ def run_walk_forward(
 
     predictions_df = pd.concat(pred_frames).sort_index()
     return all_results, predictions_df
+
+
+def fold_results_to_table(
+    fold_results: list[FoldResult],
+    config_name: str,
+    model_name: str,
+) -> pd.DataFrame:
+    """Convert fold outputs into the required IC table schema."""
+    rows: list[dict] = []
+    for fr in fold_results:
+        m = fr.metrics
+        rows.append(
+            {
+                "config_name": config_name,
+                "model_name": model_name,
+                "fold_id": fr.fold_id,
+                "start_date": pd.Timestamp(m["start_date"]).date().isoformat(),
+                "end_date": pd.Timestamp(m["end_date"]).date().isoformat(),
+                "IC": float(m["IC"]),
+                "RankIC": float(m["RankIC"]),
+                "OOS_R2": float(m["OOS_R2"]),
+                "MAE": float(m["MAE"]),
+                "MSE": float(m["MSE"]),
+                "n_samples": int(m["n_samples"]),
+            }
+        )
+    return pd.DataFrame(rows)
