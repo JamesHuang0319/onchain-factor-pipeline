@@ -6,6 +6,7 @@
 experiment_name:   "iter1_price_onchain"
 symbol:            "BTC-USD"
 feature_set:       "price_onchain"
+label_horizon_days: 7
 
 features:
   price_factors:   true

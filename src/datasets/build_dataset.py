@@ -34,7 +34,7 @@ from src.ingest.price import download_price
 
 logger = logging.getLogger(__name__)
 
-LABEL_COL = "log_ret_7d"
+LABEL_COL = "log_ret_h"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ def build_dataset(
     start_date: str = "2018-01-01",
     end_date: Optional[str] = None,
     horizon: int = 7,
+    label_horizon_days: Optional[int] = None,
     use_price: bool = True,
     use_onchain: bool = False,
     use_macro: bool = False,
@@ -66,9 +67,9 @@ def build_dataset(
     DataFrame with:
       - OHLCV columns
       - All requested factor columns (price / onchain / macro)
-      - `log_ret_7d`: LABEL — log(close[t+horizon] / close[t])
+      - `log_ret_h`: LABEL — log(close[t+h] / close[t])
         NOTE: this is a FORWARD-looking quantity; it is only added
-        at the very end and is NaN for the last `horizon` rows.
+        at the very end and last `h` rows are dropped.
     Index: UTC DatetimeIndex (daily).
 
     Usage in training:
@@ -117,13 +118,18 @@ def build_dataset(
             if col in merged.columns:
                 data[col] = merged[col]
 
-    # ── 8. Build label (FORWARD shift — label at t uses close[t+horizon])
-    # CRITICAL: shift(-horizon) must happen AFTER all feature calculations.
+    h = int(label_horizon_days) if label_horizon_days is not None else int(horizon)
+    if h <= 0:
+        raise ValueError("label_horizon_days must be a positive integer.")
+
+    # ── 8. Build label (FORWARD shift — label at t uses close[t+h])
+    # CRITICAL: shift(-h) must happen AFTER all feature calculations.
     # The label is unavailable at time t; it is only assigned here for
     # supervised learning purposes and must NEVER be a feature.
     data[LABEL_COL] = np.log(
-        data["close"].shift(-horizon) / data["close"]
+        data["close"].shift(-h) / data["close"]
     )
+    data = data.dropna(subset=[LABEL_COL]).copy()
 
     # ── 9. Anti-leakage assertion ─────────────────────────────
     assert_no_leakage(data, label_col=LABEL_COL)

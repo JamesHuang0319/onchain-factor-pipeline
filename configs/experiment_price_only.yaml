@@ -6,6 +6,7 @@
 experiment_name:   "iter0_price_only"
 symbol:            "BTC-USD"
 feature_set:       "price"          # use only price factors
+label_horizon_days: 7
 
 features:
   price_factors:   true
