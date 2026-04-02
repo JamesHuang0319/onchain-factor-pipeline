@@ -1,19 +1,14 @@
-# configs/experiment.yaml
-# Unified master config for graduation research expansion.
-# One experiment definition, no legacy split.
-
-experiment_name: "onchain_crypto_graduation_research"
-artifact_prefix: "btc_predict"
-symbol: "BTC-USD"
+experiment_name: onchain_crypto_graduation_research
+artifact_prefix: btc_predict
+symbol: BTC-USD
 label_horizon_days: 1
-feature_set: "all"
+feature_set: all
 random_seed: 42
-
 research:
-  objective: "Compare direction vs magnitude prediction across ML/DL with on-chain-centric data."
+  objective: Compare direction vs magnitude prediction across ML/DL with on-chain-centric
+    data.
   paper_guided_not_exact_reproduction: true
   prioritize_data_coverage_and_quality: true
-
 pipeline:
   run_data_download: true
   run_feature_build: true
@@ -21,63 +16,66 @@ pipeline:
   run_training: true
   run_backtest: true
   run_reporting: true
-
 features:
   price_factors: true
   onchain_factors: true
   macro_factors: false
   ta_factors: true
-
 preprocessing:
-  handle_missing: "drop_rows_with_missing_after_merge"
+  handle_missing: drop_rows_with_missing_after_merge
   standardize_after_split: true
   preserve_temporal_order: true
   no_shuffle: true
   scaling:
-    method: "zscore"
+    method: zscore
     fit_on_train_only: true
-
 tasks:
   classification:
     enabled: true
-    label_col: "direction_h"
-    positive_class_rule: "log_ret_h>0"
-    metrics: ["accuracy", "precision", "recall", "f1"]
+    label_col: direction_h
+    positive_class_rule: log_ret_h>0
+    metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
   regression:
     enabled: true
-    label_col: "log_ret_h"
-    metrics: ["rmse", "r2", "mae", "directional_accuracy"]
-
+    label_col: log_ret_h
+    metrics:
+    - rmse
+    - r2
+    - mae
+    - directional_accuracy
 datasets:
   variants:
-    - "onchain"
-    - "ta"
-    - "all"
-    - "boruta_onchain"
-    - "boruta_ta"
-    - "boruta_all"
-    - "univariate"
-  univariate_price_col: "close"
+  - onchain
+  - ta
+  - all
+  - boruta_onchain
+  - boruta_ta
+  - boruta_all
+  - univariate
+  univariate_price_col: close
   boruta:
     enabled: true
-    estimator: "random_forest"
+    estimator: random_forest
     n_estimators: 1000
     max_iter: 100
     perc: 100
     alpha: 0.05
     random_state: 42
   feature_selection:
-    method: "boruta_lasso"
+    method: boruta_lasso
     lasso:
       alpha: 0.001
       C: 0.5
-      solver: "liblinear"
-      class_weight: "balanced"
+      solver: liblinear
+      class_weight: balanced
       max_iter: 2000
       tol: 0.0001
-      coef_threshold: 1.0e-8
+      coef_threshold: 1.0e-08
       random_state: 42
-
 models:
   ridge:
     regression:
@@ -94,16 +92,16 @@ models:
   svm:
     classification:
       C: 10.0
-      kernel: "rbf"
-      gamma: "scale"
-      class_weight: "balanced"
+      kernel: rbf
+      gamma: scale
+      class_weight: balanced
       probability: true
       normalize_features: true
       random_state: 42
     regression:
       C: 10.0
-      kernel: "rbf"
-      gamma: "scale"
+      kernel: rbf
+      gamma: scale
       epsilon: 0.01
       normalize_features: true
       random_state: 42
@@ -113,8 +111,8 @@ models:
       max_depth: 12
       min_samples_split: 4
       min_samples_leaf: 2
-      max_features: "sqrt"
-      class_weight: "balanced"
+      max_features: sqrt
+      class_weight: balanced
       random_state: 42
       n_jobs: -1
     regression:
@@ -122,7 +120,7 @@ models:
       max_depth: 12
       min_samples_split: 4
       min_samples_leaf: 2
-      max_features: "sqrt"
+      max_features: sqrt
       random_state: 42
       n_jobs: -1
   lgbm:
@@ -247,7 +245,10 @@ models:
   tcn:
     classification:
       timesteps: 12
-      channels: [32, 32, 32]
+      channels:
+      - 32
+      - 32
+      - 32
       kernel_size: 3
       dropout: 0.1
       batch_size: 64
@@ -258,7 +259,10 @@ models:
       random_state: 42
     regression:
       timesteps: 12
-      channels: [32, 32, 32]
+      channels:
+      - 32
+      - 32
+      - 32
       kernel_size: 3
       dropout: 0.1
       batch_size: 64
@@ -267,55 +271,1045 @@ models:
       learning_rate: 0.001
       weight_decay: 0.0
       random_state: 42
-
 comparison:
-  ml_models: ["svm", "rf", "lgbm", "xgboost", "lasso", "ridge"]
-  dl_models: ["lstm", "cnn_lstm", "gru", "tcn"]
-  run_matrix: "task_x_model_x_dataset"
-
+  ml_models:
+  - svm
+  - rf
+  - lgbm
+  - xgboost
+  - lasso
+  - ridge
+  dl_models:
+  - lstm
+  - cnn_lstm
+  - gru
+  - tcn
+  run_matrix: task_x_model_x_dataset
 decision:
-  selected_model: "svm"
-
+  selected_model: svm
 deep_learning:
   enabled: true
   timesteps: 5
-  tensor_layout: "(samples, timesteps, features)"
+  tensor_layout: (samples, timesteps, features)
   batch_size: 64
   max_epochs: 100
   early_stopping_patience: 10
-  optimizer: "adam"
+  optimizer: adam
   learning_rate: 0.001
-
 strategy:
-  mode: "long_short"
+  mode: long_short
   top_quantile: 0.2
   bottom_quantile: 0.2
   default_cost_bps: 10
-  cost_bps: [5, 10, 20]
-
+  cost_bps:
+  - 5
+  - 10
+  - 20
 backtest:
   initial_capital: 1000
   fee_rate_per_trade: 0.005
-  tax_rate_on_realized_profit: 0.30
+  tax_rate_on_realized_profit: 0.3
   annualization_days: 365
-  annual_metric: "annual_ror"
+  annual_metric: annual_ror
   execution_rule:
-    predict_up: "long"
-    predict_down: "short"
-
+    predict_up: long
+    predict_down: short
 evaluation:
-  walk_forward_type: "expanding"
-  horizons: [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180]
+  walk_forward_type: expanding
+  horizons:
+  - 1
+  - 2
+  - 3
+  - 5
+  - 7
+  - 10
+  - 14
+  - 21
+  - 30
+  - 45
+  - 60
+  - 90
+  - 120
+  - 180
   primary_selection_metric:
-    classification: "f1"
-    regression: "rmse"
-  report_table_id: "task_model_dataset_metrics"
-
+    classification: f1
+    regression: rmse
+  report_table_id: task_model_dataset_metrics
+tuning:
+  search_method: random
+  n_trials: 20
+  random_state: 42
+  evaluation_mode: chronological_validation
+  search_spaces:
+    rf:
+      classification:
+        n_estimators:
+        - 300
+        - 500
+        - 800
+        - 1200
+        max_depth:
+        - 4
+        - 6
+        - 8
+        - 12
+        - 16
+        - null
+        min_samples_split:
+        - 2
+        - 4
+        - 8
+        - 16
+        min_samples_leaf:
+        - 1
+        - 2
+        - 4
+        - 8
+        max_features:
+        - sqrt
+        - log2
+        - 0.5
+        - 0.8
+        class_weight:
+        - balanced
+        - balanced_subsample
+        - null
+      regression:
+        n_estimators:
+        - 300
+        - 500
+        - 800
+        - 1200
+        max_depth:
+        - 4
+        - 6
+        - 8
+        - 12
+        - 16
+        - null
+        min_samples_split:
+        - 2
+        - 4
+        - 8
+        - 16
+        min_samples_leaf:
+        - 1
+        - 2
+        - 4
+        - 8
+        max_features:
+        - sqrt
+        - log2
+        - 0.5
+        - 0.8
+    svm:
+      classification:
+        C:
+          distribution: loguniform
+          low: 0.1
+          high: 100.0
+        gamma:
+        - scale
+        - auto
+        - 0.001
+        - 0.01
+        - 0.1
+        class_weight:
+        - balanced
+        - null
+      regression:
+        C:
+          distribution: loguniform
+          low: 0.1
+          high: 100.0
+        gamma:
+        - scale
+        - auto
+        - 0.001
+        - 0.01
+        - 0.1
+        epsilon:
+          distribution: loguniform
+          low: 0.001
+          high: 0.1
+    lgbm:
+      classification:
+        n_estimators:
+        - 300
+        - 500
+        - 800
+        - 1200
+        learning_rate:
+          distribution: loguniform
+          low: 0.01
+          high: 0.2
+        max_depth:
+        - 3
+        - 4
+        - 5
+        - 6
+        - 8
+        num_leaves:
+        - 15
+        - 31
+        - 63
+        - 127
+        min_child_samples:
+        - 10
+        - 20
+        - 30
+        - 50
+        subsample:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        colsample_bytree:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        reg_alpha:
+          distribution: loguniform
+          low: 0.001
+          high: 1.0
+        reg_lambda:
+          distribution: loguniform
+          low: 0.1
+          high: 10.0
+      regression:
+        n_estimators:
+        - 300
+        - 500
+        - 800
+        - 1200
+        learning_rate:
+          distribution: loguniform
+          low: 0.01
+          high: 0.2
+        max_depth:
+        - 3
+        - 4
+        - 5
+        - 6
+        - 8
+        num_leaves:
+        - 15
+        - 31
+        - 63
+        - 127
+        min_child_samples:
+        - 10
+        - 20
+        - 30
+        - 50
+        subsample:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        colsample_bytree:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        reg_alpha:
+          distribution: loguniform
+          low: 0.001
+          high: 1.0
+        reg_lambda:
+          distribution: loguniform
+          low: 0.1
+          high: 10.0
+    xgboost:
+      classification:
+        n_estimators:
+        - 300
+        - 500
+        - 800
+        - 1200
+        learning_rate:
+          distribution: loguniform
+          low: 0.01
+          high: 0.2
+        max_depth:
+        - 3
+        - 4
+        - 5
+        - 6
+        - 8
+        subsample:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        colsample_bytree:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        reg_alpha:
+          distribution: loguniform
+          low: 0.001
+          high: 1.0
+        reg_lambda:
+          distribution: loguniform
+          low: 0.1
+          high: 10.0
+      regression:
+        n_estimators:
+        - 300
+        - 500
+        - 800
+        - 1200
+        learning_rate:
+          distribution: loguniform
+          low: 0.01
+          high: 0.2
+        max_depth:
+        - 3
+        - 4
+        - 5
+        - 6
+        - 8
+        subsample:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        colsample_bytree:
+          distribution: uniform
+          low: 0.6
+          high: 1.0
+        reg_alpha:
+          distribution: loguniform
+          low: 0.001
+          high: 1.0
+        reg_lambda:
+          distribution: loguniform
+          low: 0.1
+          high: 10.0
+  best_params:
+    rf:
+      classification:
+        onchain:
+          n_estimators: 500
+          max_depth: null
+          min_samples_split: 8
+          min_samples_leaf: 1
+          max_features: log2
+          class_weight: balanced
+          random_state: 56
+          n_jobs: -1
+          task: classification
+        boruta_onchain:
+          n_estimators: 300
+          max_depth: 6
+          min_samples_split: 4
+          min_samples_leaf: 1
+          max_features: log2
+          class_weight: null
+          random_state: 65
+          n_jobs: -1
+          task: classification
+        boruta_all:
+          n_estimators: 800
+          max_depth: null
+          min_samples_split: 8
+          min_samples_leaf: 2
+          max_features: sqrt
+          class_weight: balanced
+          random_state: 63
+          n_jobs: -1
+          task: classification
+        ta:
+          n_estimators: 500
+          max_depth: null
+          min_samples_split: 8
+          min_samples_leaf: 1
+          max_features: log2
+          class_weight: null
+          random_state: 53
+          n_jobs: -1
+          task: classification
+        all:
+          n_estimators: 500
+          max_depth: null
+          min_samples_split: 8
+          min_samples_leaf: 1
+          max_features: log2
+          class_weight: balanced
+          random_state: 55
+          n_jobs: -1
+          task: classification
+        boruta_ta:
+          n_estimators: 500
+          max_depth: null
+          min_samples_split: 8
+          min_samples_leaf: 1
+          max_features: log2
+          class_weight: null
+          random_state: 53
+          n_jobs: -1
+          task: classification
+        univariate:
+          n_estimators: 300
+          max_depth: 4
+          min_samples_split: 4
+          min_samples_leaf: 2
+          max_features: 0.8
+          class_weight: null
+          random_state: 60
+          n_jobs: -1
+          task: classification
+      regression:
+        boruta_onchain:
+          n_estimators: 800
+          max_depth: 4
+          min_samples_split: 2
+          min_samples_leaf: 8
+          max_features: sqrt
+          random_state: 52
+          n_jobs: -1
+          task: regression
+        boruta_all:
+          n_estimators: 800
+          max_depth: 4
+          min_samples_split: 4
+          min_samples_leaf: 1
+          max_features: 0.8
+          random_state: 64
+          n_jobs: -1
+          task: regression
+        onchain:
+          n_estimators: 800
+          max_depth: 8
+          min_samples_split: 8
+          min_samples_leaf: 1
+          max_features: 0.8
+          random_state: 50
+          n_jobs: -1
+          task: regression
+        ta:
+          n_estimators: 500
+          max_depth: 6
+          min_samples_split: 8
+          min_samples_leaf: 8
+          max_features: 0.8
+          random_state: 61
+          n_jobs: -1
+          task: regression
+        all:
+          n_estimators: 500
+          max_depth: 6
+          min_samples_split: 8
+          min_samples_leaf: 8
+          max_features: 0.8
+          random_state: 61
+          n_jobs: -1
+          task: regression
+        boruta_ta:
+          n_estimators: 800
+          max_depth: 4
+          min_samples_split: 2
+          min_samples_leaf: 8
+          max_features: sqrt
+          random_state: 49
+          n_jobs: -1
+          task: regression
+        univariate:
+          n_estimators: 800
+          max_depth: 6
+          min_samples_split: 8
+          min_samples_leaf: 1
+          max_features: log2
+          random_state: 55
+          n_jobs: -1
+          task: regression
+    svm:
+      classification:
+        boruta_onchain:
+          C: 10.717622652265687
+          kernel: rbf
+          gamma: 0.1
+          class_weight: balanced
+          probability: true
+          normalize_features: true
+          random_state: 45
+          task: classification
+        boruta_all:
+          C: 10.717622652265687
+          kernel: rbf
+          gamma: 0.1
+          class_weight: balanced
+          probability: true
+          normalize_features: true
+          random_state: 45
+          task: classification
+      regression:
+        ta:
+          C: 2.2265227595332604
+          kernel: rbf
+          gamma: 0.001
+          epsilon: 0.04157774327737049
+          normalize_features: true
+          random_state: 49
+          task: regression
+        boruta_onchain:
+          C: 1.381588390256013
+          kernel: rbf
+          gamma: 0.01
+          epsilon: 0.018679656620337434
+          normalize_features: true
+          random_state: 60
+          task: regression
+        boruta_all:
+          C: 1.381588390256013
+          kernel: rbf
+          gamma: 0.01
+          epsilon: 0.018679656620337434
+          normalize_features: true
+          random_state: 60
+          task: regression
+    xgboost:
+      classification:
+        onchain:
+          n_estimators: 1200
+          learning_rate: 0.01336075214036395
+          max_depth: 5
+          subsample: 0.8414904125467564
+          colsample_bytree: 0.9228513093097521
+          reg_alpha: 0.15459497026697605
+          reg_lambda: 1.1815610957838971
+          random_state: 47
+          n_jobs: -1
+          task: classification
+        ta:
+          n_estimators: 1200
+          learning_rate: 0.02299598388592641
+          max_depth: 5
+          subsample: 0.6650616388624339
+          colsample_bytree: 0.7421082800910086
+          reg_alpha: 0.1024531989451945
+          reg_lambda: 2.533031711956629
+          random_state: 50
+          n_jobs: -1
+          task: classification
+        all:
+          n_estimators: 800
+          learning_rate: 0.043220589114238935
+          max_depth: 3
+          subsample: 0.9716394465058469
+          colsample_bytree: 0.9514887511292737
+          reg_alpha: 0.3126054808028224
+          reg_lambda: 0.4121243268647269
+          random_state: 61
+          n_jobs: -1
+          task: classification
+        boruta_onchain:
+          n_estimators: 500
+          learning_rate: 0.07775058690275993
+          max_depth: 3
+          subsample: 0.6916192287856417
+          colsample_bytree: 0.6128400975616151
+          reg_alpha: 0.008838104742344489
+          reg_lambda: 0.3431482211997992
+          random_state: 52
+          n_jobs: -1
+          task: classification
+        boruta_ta:
+          n_estimators: 500
+          learning_rate: 0.1541762533687731
+          max_depth: 8
+          subsample: 0.9505470505890675
+          colsample_bytree: 0.7258711523193911
+          reg_alpha: 0.09253712360175416
+          reg_lambda: 0.6183919139195475
+          random_state: 53
+          n_jobs: -1
+          task: classification
+        boruta_all:
+          n_estimators: 1200
+          learning_rate: 0.029577960974638145
+          max_depth: 4
+          subsample: 0.8038105174705859
+          colsample_bytree: 0.6363637648695175
+          reg_alpha: 0.0013846790654164685
+          reg_lambda: 0.1656907488239385
+          random_state: 55
+          n_jobs: -1
+          task: classification
+        univariate:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: classification
+      regression:
+        onchain:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: regression
+        ta:
+          n_estimators: 300
+          learning_rate: 0.010778038801831716
+          max_depth: 5
+          subsample: 0.6979567415213905
+          colsample_bytree: 0.6558151714100575
+          reg_alpha: 0.0020299508770612964
+          reg_lambda: 3.029252600136894
+          random_state: 43
+          n_jobs: -1
+          task: regression
+        all:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: regression
+        boruta_onchain:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: regression
+        boruta_ta:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: regression
+        boruta_all:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: regression
+        univariate:
+          n_estimators: 300
+          learning_rate: 0.011471465350374582
+          max_depth: 4
+          subsample: 0.9092273363154768
+          colsample_bytree: 0.9940886082643031
+          reg_alpha: 0.3680892745189665
+          reg_lambda: 5.407136503563504
+          random_state: 49
+          n_jobs: -1
+          task: regression
+    lgbm:
+      classification:
+        onchain:
+          n_estimators: 800
+          learning_rate: 0.1838465858112644
+          max_depth: 4
+          num_leaves: 15
+          min_child_samples: 30
+          subsample: 0.9366677392689868
+          colsample_bytree: 0.8030651527910537
+          reg_alpha: 0.003951239049978469
+          reg_lambda: 0.5595355765563
+          random_state: 56
+          n_jobs: -1
+          task: classification
+        ta:
+          n_estimators: 500
+          learning_rate: 0.17593932408329982
+          max_depth: 5
+          num_leaves: 15
+          min_child_samples: 10
+          subsample: 0.751970920254935
+          colsample_bytree: 0.7435917521938513
+          reg_alpha: 0.010761360181776593
+          reg_lambda: 0.33809732482029303
+          random_state: 46
+          n_jobs: -1
+          task: classification
+        all:
+          n_estimators: 300
+          learning_rate: 0.010778038801831716
+          max_depth: 5
+          num_leaves: 31
+          min_child_samples: 20
+          subsample: 0.6558151714100575
+          colsample_bytree: 0.640998070468603
+          reg_alpha: 0.16672596278656324
+          reg_lambda: 1.232347156953696
+          random_state: 43
+          n_jobs: -1
+          task: classification
+        boruta_onchain:
+          n_estimators: 1200
+          learning_rate: 0.14726329120893958
+          max_depth: 6
+          num_leaves: 63
+          min_child_samples: 20
+          subsample: 0.9989303111956644
+          colsample_bytree: 0.6553326979563423
+          reg_alpha: 0.030237613021454314
+          reg_lambda: 3.2476133280995625
+          random_state: 53
+          n_jobs: -1
+          task: classification
+        boruta_ta:
+          n_estimators: 300
+          learning_rate: 0.08900265114467813
+          max_depth: 8
+          num_leaves: 15
+          min_child_samples: 50
+          subsample: 0.6315200792313832
+          colsample_bytree: 0.7172713125628372
+          reg_alpha: 0.07689877091899977
+          reg_lambda: 5.900699467720066
+          random_state: 47
+          n_jobs: -1
+          task: classification
+        boruta_all:
+          n_estimators: 500
+          learning_rate: 0.08463850799238919
+          max_depth: 6
+          num_leaves: 63
+          min_child_samples: 50
+          subsample: 0.9598456338571781
+          colsample_bytree: 0.7805944565564519
+          reg_alpha: 0.005542642161307775
+          reg_lambda: 0.13429251047943563
+          random_state: 60
+          n_jobs: -1
+          task: classification
+        univariate:
+          n_estimators: 800
+          learning_rate: 0.1838465858112644
+          max_depth: 4
+          num_leaves: 15
+          min_child_samples: 30
+          subsample: 0.9366677392689868
+          colsample_bytree: 0.8030651527910537
+          reg_alpha: 0.003951239049978469
+          reg_lambda: 0.5595355765563
+          random_state: 56
+          n_jobs: -1
+          task: classification
+      regression:
+        onchain:
+          n_estimators: 800
+          learning_rate: 0.1838465858112644
+          max_depth: 4
+          num_leaves: 15
+          min_child_samples: 30
+          subsample: 0.9366677392689868
+          colsample_bytree: 0.8030651527910537
+          reg_alpha: 0.003951239049978469
+          reg_lambda: 0.5595355765563
+          random_state: 56
+          n_jobs: -1
+          task: regression
+        ta:
+          n_estimators: 800
+          learning_rate: 0.1838465858112644
+          max_depth: 4
+          num_leaves: 15
+          min_child_samples: 30
+          subsample: 0.9366677392689868
+          colsample_bytree: 0.8030651527910537
+          reg_alpha: 0.003951239049978469
+          reg_lambda: 0.5595355765563
+          random_state: 56
+          n_jobs: -1
+          task: regression
+        all:
+          n_estimators: 1200
+          learning_rate: 0.14726329120893958
+          max_depth: 6
+          num_leaves: 63
+          min_child_samples: 20
+          subsample: 0.9989303111956644
+          colsample_bytree: 0.6553326979563423
+          reg_alpha: 0.030237613021454314
+          reg_lambda: 3.2476133280995625
+          random_state: 53
+          n_jobs: -1
+          task: regression
+        boruta_onchain:
+          n_estimators: 500
+          learning_rate: 0.07775058690275993
+          max_depth: 3
+          num_leaves: 31
+          min_child_samples: 10
+          subsample: 0.9220183203084857
+          colsample_bytree: 0.7604659148089316
+          reg_alpha: 0.0015796679821207115
+          reg_lambda: 6.703046750089905
+          random_state: 51
+          n_jobs: -1
+          task: regression
+        boruta_ta:
+          n_estimators: 500
+          learning_rate: 0.08463850799238919
+          max_depth: 6
+          num_leaves: 63
+          min_child_samples: 50
+          subsample: 0.9598456338571781
+          colsample_bytree: 0.7805944565564519
+          reg_alpha: 0.005542642161307775
+          reg_lambda: 0.13429251047943563
+          random_state: 60
+          n_jobs: -1
+          task: regression
+        boruta_all:
+          n_estimators: 500
+          learning_rate: 0.07775058690275993
+          max_depth: 3
+          num_leaves: 31
+          min_child_samples: 10
+          subsample: 0.9220183203084857
+          colsample_bytree: 0.7604659148089316
+          reg_alpha: 0.0015796679821207115
+          reg_lambda: 6.703046750089905
+          random_state: 51
+          n_jobs: -1
+          task: regression
+        univariate:
+          n_estimators: 800
+          learning_rate: 0.1838465858112644
+          max_depth: 4
+          num_leaves: 15
+          min_child_samples: 30
+          subsample: 0.9366677392689868
+          colsample_bytree: 0.8030651527910537
+          reg_alpha: 0.003951239049978469
+          reg_lambda: 0.5595355765563
+          random_state: 56
+          n_jobs: -1
+          task: regression
+  best_results:
+    rf:
+      classification:
+        onchain:
+          objective: f1
+          objective_value: 0.6167400881057269
+          updated_at_utc: '2026-04-02T12:25:59.494301+00:00'
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.527363184079602
+          updated_at_utc: '2026-04-02T12:31:34.537103+00:00'
+        boruta_all:
+          objective: f1
+          objective_value: 0.5675675675675677
+          updated_at_utc: '2026-04-02T12:34:37.397104+00:00'
+        ta:
+          objective: f1
+          objective_value: 0.47674418604651164
+          updated_at_utc: '2026-04-02T12:27:37.525689+00:00'
+        all:
+          objective: f1
+          objective_value: 0.5777777777777777
+          updated_at_utc: '2026-04-02T12:29:52.634253+00:00'
+        boruta_ta:
+          objective: f1
+          objective_value: 0.4705882352941176
+          updated_at_utc: '2026-04-02T12:32:48.950908+00:00'
+        univariate:
+          objective: f1
+          objective_value: 0.5929203539823009
+          updated_at_utc: '2026-04-02T12:36:24.704005+00:00'
+      regression:
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.027057519268704883
+          updated_at_utc: '2026-04-02T12:48:02.608082+00:00'
+        boruta_all:
+          objective: rmse
+          objective_value: 0.026927042856408283
+          updated_at_utc: '2026-04-02T12:52:15.149489+00:00'
+        onchain:
+          objective: rmse
+          objective_value: 0.026751311827720965
+          updated_at_utc: '2026-04-02T12:38:22.096888+00:00'
+        ta:
+          objective: rmse
+          objective_value: 0.02654360189590418
+          updated_at_utc: '2026-04-02T12:42:05.038682+00:00'
+        all:
+          objective: rmse
+          objective_value: 0.026645387948984717
+          updated_at_utc: '2026-04-02T12:45:08.263975+00:00'
+        boruta_ta:
+          objective: rmse
+          objective_value: 0.02711075971217814
+          updated_at_utc: '2026-04-02T12:49:55.506342+00:00'
+        univariate:
+          objective: rmse
+          objective_value: 0.027052992672403683
+          updated_at_utc: '2026-04-02T12:54:22.568548+00:00'
+    svm:
+      classification:
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.6259541984732825
+          updated_at_utc: '2026-04-02T11:58:15.749682+00:00'
+        boruta_all:
+          objective: f1
+          objective_value: 0.6259541984732825
+          updated_at_utc: '2026-04-02T12:01:37.958502+00:00'
+      regression:
+        ta:
+          objective: rmse
+          objective_value: 0.02657695523088042
+          updated_at_utc: '2026-04-02T12:12:43.980794+00:00'
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.026471032543841613
+          updated_at_utc: '2026-04-02T12:14:44.987267+00:00'
+        boruta_all:
+          objective: rmse
+          objective_value: 0.026973119799207593
+          updated_at_utc: '2026-04-02T12:17:30.861546+00:00'
+    xgboost:
+      classification:
+        onchain:
+          objective: f1
+          objective_value: 0.6116504854368932
+          updated_at_utc: '2026-04-02T12:56:22.935588+00:00'
+        ta:
+          objective: f1
+          objective_value: 0.5578947368421053
+          updated_at_utc: '2026-04-02T12:58:49.142994+00:00'
+        all:
+          objective: f1
+          objective_value: 0.5833333333333333
+          updated_at_utc: '2026-04-02T13:00:50.864048+00:00'
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.5346534653465347
+          updated_at_utc: '2026-04-02T13:02:24.305804+00:00'
+        boruta_ta:
+          objective: f1
+          objective_value: 0.4942528735632184
+          updated_at_utc: '2026-04-02T13:03:17.967299+00:00'
+        boruta_all:
+          objective: f1
+          objective_value: 0.5714285714285714
+          updated_at_utc: '2026-04-02T13:04:28.586906+00:00'
+        univariate:
+          objective: f1
+          objective_value: 0.5376344086021505
+          updated_at_utc: '2026-04-02T13:05:44.818342+00:00'
+      regression:
+        onchain:
+          objective: rmse
+          objective_value: 0.027185432474723
+          updated_at_utc: '2026-04-02T13:06:52.721573+00:00'
+        ta:
+          objective: rmse
+          objective_value: 0.027798571784011968
+          updated_at_utc: '2026-04-02T13:07:51.584525+00:00'
+        all:
+          objective: rmse
+          objective_value: 0.027485639206475725
+          updated_at_utc: '2026-04-02T13:09:21.393110+00:00'
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.02705667637661485
+          updated_at_utc: '2026-04-02T13:10:51.245796+00:00'
+        boruta_ta:
+          objective: rmse
+          objective_value: 0.027124452954059373
+          updated_at_utc: '2026-04-02T13:12:10.758253+00:00'
+        boruta_all:
+          objective: rmse
+          objective_value: 0.02744474030807935
+          updated_at_utc: '2026-04-02T13:13:46.485067+00:00'
+        univariate:
+          objective: rmse
+          objective_value: 0.027168650779121492
+          updated_at_utc: '2026-04-02T13:15:09.129168+00:00'
+    lgbm:
+      classification:
+        onchain:
+          objective: f1
+          objective_value: 0.6274509803921569
+          updated_at_utc: '2026-04-02T13:15:54.048185+00:00'
+        ta:
+          objective: f1
+          objective_value: 0.6283524904214559
+          updated_at_utc: '2026-04-02T13:16:13.899343+00:00'
+        all:
+          objective: f1
+          objective_value: 0.6259541984732825
+          updated_at_utc: '2026-04-02T13:16:34.208309+00:00'
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.6294820717131474
+          updated_at_utc: '2026-04-02T13:17:00.841476+00:00'
+        boruta_ta:
+          objective: f1
+          objective_value: 0.6274509803921569
+          updated_at_utc: '2026-04-02T13:17:27.002033+00:00'
+        boruta_all:
+          objective: f1
+          objective_value: 0.6332046332046333
+          updated_at_utc: '2026-04-02T13:17:53.110353+00:00'
+        univariate:
+          objective: f1
+          objective_value: 0.6079295154185023
+          updated_at_utc: '2026-04-02T13:18:18.066829+00:00'
+      regression:
+        onchain:
+          objective: rmse
+          objective_value: 0.02661203025814064
+          updated_at_utc: '2026-04-02T13:18:38.578465+00:00'
+        ta:
+          objective: rmse
+          objective_value: 0.02686490948028059
+          updated_at_utc: '2026-04-02T13:18:59.037639+00:00'
+        all:
+          objective: rmse
+          objective_value: 0.026641399251029586
+          updated_at_utc: '2026-04-02T13:19:20.883003+00:00'
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.026892952237440107
+          updated_at_utc: '2026-04-02T13:20:12.778248+00:00'
+        boruta_ta:
+          objective: rmse
+          objective_value: 0.026981368438568496
+          updated_at_utc: '2026-04-02T13:21:13.536733+00:00'
+        boruta_all:
+          objective: rmse
+          objective_value: 0.027031948766309873
+          updated_at_utc: '2026-04-02T13:22:31.529071+00:00'
+        univariate:
+          objective: rmse
+          objective_value: 0.0267357082084395
+          updated_at_utc: '2026-04-02T13:23:37.481123+00:00'
 output:
-  figures_dir: "reports/figures"
-  trading_dir: "reports/trading"
-  model_dir: "models_saved"
-  summary_dir: "reports/00_summary"
-  registry_file: "reports/experiment_registry.csv"
-
-
+  figures_dir: reports/figures
+  trading_dir: reports/trading
+  model_dir: models_saved
+  summary_dir: reports/00_summary
+  registry_file: reports/experiment_registry.csv

@@ -18,11 +18,14 @@ Example (3-command demo):
 """
 from __future__ import annotations
 
+import copy
 import json
 import inspect
 import logging
 import os
+import random
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -70,6 +73,11 @@ def _load_exp_cfg(config: str) -> dict:
     return _load_yaml(config)
 
 
+def _write_yaml(path: str | Path, data: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+
+
 def _artifact_prefix(exp_cfg: dict) -> str:
     prefix = str(exp_cfg.get("artifact_prefix", "")).strip()
     if prefix:
@@ -101,15 +109,34 @@ def _dataframe_to_markdown(df: pd.DataFrame) -> str:
     return "\n".join(rows)
 
 
-def _resolve_model(model_name: str, model_cfg: dict, task: str = "regression"):
+def _resolve_model(
+    model_name: str,
+    model_cfg: dict,
+    task: str = "regression",
+    *,
+    exp_cfg: Optional[dict] = None,
+    variant_name: Optional[str] = None,
+):
     """Return (ModelClass, config_dict) for a given model name."""
     m = model_name.lower().strip()
 
     def _task_cfg(name: str) -> dict:
         cfg = model_cfg.get(name, {})
         if isinstance(cfg, dict) and task in cfg and isinstance(cfg[task], dict):
-            return cfg[task]
-        return cfg if isinstance(cfg, dict) else {}
+            base_cfg = copy.deepcopy(cfg[task])
+        else:
+            base_cfg = copy.deepcopy(cfg if isinstance(cfg, dict) else {})
+        if exp_cfg and variant_name:
+            tuned_cfg = (
+                exp_cfg.get("tuning", {})
+                .get("best_params", {})
+                .get(name, {})
+                .get(task, {})
+                .get(variant_name, {})
+            )
+            if isinstance(tuned_cfg, dict) and tuned_cfg:
+                base_cfg.update(copy.deepcopy(tuned_cfg))
+        return base_cfg
 
     if m == "ridge":
         from src.models.ridge import RidgeModel
@@ -443,6 +470,240 @@ def _fit_final_model(
         val_df[label_col].values if len(val_df) else None,
     )
     return model, train_df, val_df
+
+
+def _tuning_root(exp_cfg: dict) -> Path:
+    root = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/00_summary")) / "tuning"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _write_best_params_to_config(
+    config_path: str | Path,
+    exp_cfg: dict,
+    *,
+    model_name: str,
+    task_name: str,
+    variant_name: str,
+    params: dict,
+    objective: str,
+    objective_value: float,
+) -> None:
+    exp_cfg.setdefault("tuning", {})
+    tuning_cfg = exp_cfg["tuning"]
+    tuning_cfg.setdefault("best_params", {})
+    tuning_cfg["best_params"].setdefault(model_name, {})
+    tuning_cfg["best_params"][model_name].setdefault(task_name, {})
+    tuning_cfg["best_params"][model_name][task_name][variant_name] = copy.deepcopy(params)
+
+    tuning_cfg.setdefault("best_results", {})
+    tuning_cfg["best_results"].setdefault(model_name, {})
+    tuning_cfg["best_results"][model_name].setdefault(task_name, {})
+    tuning_cfg["best_results"][model_name][task_name][variant_name] = {
+        "objective": objective,
+        "objective_value": float(objective_value),
+        "updated_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+    }
+    _write_yaml(config_path, exp_cfg)
+
+
+def _run_followup_cli_step(args: list[str], step_name: str) -> None:
+    click.echo(f"\n── {step_name} ──")
+    click.echo("  " + " ".join(args))
+    result = subprocess.run(args, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(f"{step_name} failed with exit code {result.returncode}.")
+
+
+def _default_tuning_metric(task_name: str, exp_cfg: dict) -> str:
+    primary = exp_cfg.get("evaluation", {}).get("primary_selection_metric", {})
+    if task_name == "classification":
+        return str(primary.get("classification", "f1"))
+    return str(primary.get("regression", "rmse"))
+
+
+def _metric_direction(metric_name: str) -> str:
+    maximize = {
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
+        "ic",
+        "rank_ic",
+        "r2",
+        "oos_r2",
+        "directional_accuracy",
+    }
+    return "max" if metric_name.lower() in maximize else "min"
+
+
+def _score_metric(metric_name: str, metric_value: float) -> float:
+    if pd.isna(metric_value):
+        return float("-inf")
+    return float(metric_value) if _metric_direction(metric_name) == "max" else float(-metric_value)
+
+
+def _builtin_tuning_space(model_name: str, task_name: str) -> dict[str, object]:
+    model_key = model_name.lower().strip()
+    task_key = task_name.lower().strip()
+    spaces: dict[tuple[str, str], dict[str, object]] = {
+        ("rf", "classification"): {
+            "n_estimators": [300, 500, 800, 1200],
+            "max_depth": [4, 6, 8, 12, 16, None],
+            "min_samples_split": [2, 4, 8, 16],
+            "min_samples_leaf": [1, 2, 4, 8],
+            "max_features": ["sqrt", "log2", 0.5, 0.8],
+            "class_weight": ["balanced", "balanced_subsample", None],
+        },
+        ("rf", "regression"): {
+            "n_estimators": [300, 500, 800, 1200],
+            "max_depth": [4, 6, 8, 12, 16, None],
+            "min_samples_split": [2, 4, 8, 16],
+            "min_samples_leaf": [1, 2, 4, 8],
+            "max_features": ["sqrt", "log2", 0.5, 0.8],
+        },
+        ("svm", "classification"): {
+            "C": {"distribution": "loguniform", "low": 0.1, "high": 100.0},
+            "gamma": ["scale", "auto", 0.001, 0.01, 0.1],
+            "class_weight": ["balanced", None],
+        },
+        ("svm", "regression"): {
+            "C": {"distribution": "loguniform", "low": 0.1, "high": 100.0},
+            "gamma": ["scale", "auto", 0.001, 0.01, 0.1],
+            "epsilon": {"distribution": "loguniform", "low": 0.001, "high": 0.1},
+        },
+        ("lgbm", "classification"): {
+            "n_estimators": [300, 500, 800, 1200],
+            "learning_rate": {"distribution": "loguniform", "low": 0.01, "high": 0.2},
+            "max_depth": [3, 4, 5, 6, 8],
+            "num_leaves": [15, 31, 63, 127],
+            "min_child_samples": [10, 20, 30, 50],
+            "subsample": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "reg_alpha": {"distribution": "loguniform", "low": 0.001, "high": 1.0},
+            "reg_lambda": {"distribution": "loguniform", "low": 0.1, "high": 10.0},
+        },
+        ("lgbm", "regression"): {
+            "n_estimators": [300, 500, 800, 1200],
+            "learning_rate": {"distribution": "loguniform", "low": 0.01, "high": 0.2},
+            "max_depth": [3, 4, 5, 6, 8],
+            "num_leaves": [15, 31, 63, 127],
+            "min_child_samples": [10, 20, 30, 50],
+            "subsample": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "reg_alpha": {"distribution": "loguniform", "low": 0.001, "high": 1.0},
+            "reg_lambda": {"distribution": "loguniform", "low": 0.1, "high": 10.0},
+        },
+        ("xgboost", "classification"): {
+            "n_estimators": [300, 500, 800, 1200],
+            "learning_rate": {"distribution": "loguniform", "low": 0.01, "high": 0.2},
+            "max_depth": [3, 4, 5, 6, 8],
+            "subsample": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "reg_alpha": {"distribution": "loguniform", "low": 0.001, "high": 1.0},
+            "reg_lambda": {"distribution": "loguniform", "low": 0.1, "high": 10.0},
+        },
+        ("xgboost", "regression"): {
+            "n_estimators": [300, 500, 800, 1200],
+            "learning_rate": {"distribution": "loguniform", "low": 0.01, "high": 0.2},
+            "max_depth": [3, 4, 5, 6, 8],
+            "subsample": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"distribution": "uniform", "low": 0.6, "high": 1.0},
+            "reg_alpha": {"distribution": "loguniform", "low": 0.001, "high": 1.0},
+            "reg_lambda": {"distribution": "loguniform", "low": 0.1, "high": 10.0},
+        },
+    }
+    return copy.deepcopy(spaces.get((model_key, task_key), {}))
+
+
+def _resolve_tuning_space(exp_cfg: dict, model_name: str, task_name: str) -> dict[str, object]:
+    tuning_cfg = exp_cfg.get("tuning", {})
+    search_spaces = tuning_cfg.get("search_spaces", {})
+    model_spaces = search_spaces.get(model_name, {}) if isinstance(search_spaces, dict) else {}
+    task_space = model_spaces.get(task_name, {}) if isinstance(model_spaces, dict) else {}
+    if isinstance(task_space, dict) and task_space:
+        return copy.deepcopy(task_space)
+    return _builtin_tuning_space(model_name, task_name)
+
+
+def _sample_search_value(spec, rng: random.Random):
+    if isinstance(spec, list):
+        return copy.deepcopy(rng.choice(spec))
+    if isinstance(spec, dict):
+        dist = str(spec.get("distribution", "categorical")).lower()
+        if dist == "categorical":
+            choices = spec.get("choices", [])
+            if not choices:
+                raise ValueError("categorical search space requires non-empty choices")
+            return copy.deepcopy(rng.choice(list(choices)))
+        low = spec.get("low")
+        high = spec.get("high")
+        if low is None or high is None:
+            raise ValueError(f"distribution '{dist}' requires low/high bounds")
+        if dist == "uniform":
+            return float(rng.uniform(float(low), float(high)))
+        if dist == "loguniform":
+            lo = np.log(float(low))
+            hi = np.log(float(high))
+            return float(np.exp(rng.uniform(lo, hi)))
+        if dist == "int":
+            step = int(spec.get("step", 1))
+            values = list(range(int(low), int(high) + 1, step))
+            return int(rng.choice(values))
+    return copy.deepcopy(spec)
+
+
+def _sample_param_config(
+    base_config: dict,
+    search_space: dict[str, object],
+    rng: random.Random,
+    trial_index: int,
+) -> dict:
+    sampled = copy.deepcopy(base_config)
+    for key, spec in search_space.items():
+        sampled[key] = _sample_search_value(spec, rng)
+    sampled["random_state"] = int(sampled.get("random_state", 42)) + int(trial_index)
+    return sampled
+
+
+def _evaluate_model_config(
+    model_cls,
+    model_config: dict,
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    task_name: str,
+    metric_prefix_name: str,
+) -> tuple[dict[str, float], np.ndarray]:
+    from src.evaluation.metrics import compute_classification_metrics, compute_metrics, rank_ic
+
+    model = model_cls(config=model_config)
+    model.fit(
+        train_df[feature_cols],
+        train_df[label_col].values,
+        val_df[feature_cols] if len(val_df) else None,
+        val_df[label_col].values if len(val_df) else None,
+    )
+    y_pred = model.predict(val_df[feature_cols])
+    if task_name == "classification":
+        metrics = compute_classification_metrics(
+            val_df[label_col].values,
+            y_pred,
+            prefix=f"{metric_prefix_name}_{task_name}_val",
+            threshold=0.5,
+        )
+    else:
+        metrics = compute_metrics(
+            val_df[label_col].values,
+            y_pred,
+            prefix=f"{metric_prefix_name}_{task_name}_val",
+        )
+        metrics[f"{metric_prefix_name}_{task_name}_val_rank_ic"] = rank_ic(
+            val_df[label_col].values,
+            y_pred,
+        )
+    return metrics, y_pred
 
 
 def _apply_boruta_proxy_selection(
@@ -806,6 +1067,256 @@ def pipeline_prepare(config: str, data_config: str, force: bool, dataset_variant
     click.secho("\n✓ pipeline-prepare complete. Data foundation is ready for model selection.", fg="green", bold=True)
 
 
+# ── tune ──────────────────────────────────────────────────────
+
+@cli.command("tune")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--model", "model_name", default=None, type=str, help="Model to tune.")
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Task to tune. Default resolves from config.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+@click.option("--trials", default=None, type=int, help="Override random-search trial count.")
+@click.option("--metric", default=None, type=str, help="Objective metric. Default uses primary selection metric.")
+@click.option("--apply-best/--no-apply-best", default=True, help="Write best params back to config.")
+@click.option("--retrain-best/--no-retrain-best", default=True, help="Run train again with best params.")
+@click.option("--run-backtest/--no-run-backtest", default=True, help="Run backtest after retraining.")
+@click.option("--run-report/--no-run-report", default=True, help="Run report after backtest.")
+def tune(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+    trials: Optional[int],
+    metric: Optional[str],
+    apply_best: bool,
+    retrain_best: bool,
+    run_backtest: bool,
+    run_report: bool,
+):
+    """Random-search hyperparameter tuning on a chronological validation split."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    task_name = _resolve_task(task, exp_cfg, data_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
+
+    df = _load_or_build_feature_dataset(exp_cfg, data_cfg)
+    label_col, feature_cols = _resolve_feature_cols_for_variant(
+        df=df,
+        task_name=task_name,
+        variant_name=variant_name,
+        exp_cfg=exp_cfg,
+        data_cfg=data_cfg,
+    )
+
+    ModelCls, base_model_cfg = _resolve_model(
+        resolved_model_name,
+        exp_cfg.get("models", {}),
+        task=task_name,
+        exp_cfg=exp_cfg,
+        variant_name=variant_name,
+    )
+    train_df, val_df = _split_final_fit_data(
+        df=df,
+        feature_cols=feature_cols,
+        label_col=label_col,
+        val_months=float(data_cfg.get("split", {}).get("val_months", 6)),
+    )
+    if len(val_df) == 0:
+        raise click.ClickException("Validation split is empty. Tuning requires a non-empty validation window.")
+
+    tuning_cfg = exp_cfg.get("tuning", {})
+    n_trials = int(trials or tuning_cfg.get("n_trials", 20))
+    objective = str(metric or _default_tuning_metric(task_name, exp_cfg)).lower()
+    search_space = _resolve_tuning_space(exp_cfg, resolved_model_name, task_name)
+    if not search_space:
+        raise click.ClickException(
+            f"No tuning search space configured for model={resolved_model_name}, task={task_name}."
+        )
+
+    rng = random.Random(int(tuning_cfg.get("random_state", exp_cfg.get("random_seed", 42))))
+    tuning_root = _tuning_root(exp_cfg)
+    stem = f"{_artifact_prefix(exp_cfg)}_{resolved_model_name}_{task_name}_{variant_name}"
+    trials_path = tuning_root / f"{stem}_trials.csv"
+    best_path = tuning_root / f"{stem}_best.json"
+
+    click.echo(
+        f"\n── Hyperparameter Tuning ──\n"
+        f"  model={resolved_model_name}\n"
+        f"  task={task_name}\n"
+        f"  dataset_variant={variant_name}\n"
+        f"  features={len(feature_cols)}\n"
+        f"  train_rows={len(train_df)}\n"
+        f"  val_rows={len(val_df)}\n"
+        f"  objective={objective}\n"
+        f"  trials={n_trials}"
+    )
+
+    rows: list[dict] = []
+    best_score = float("-inf")
+    best_row: dict | None = None
+
+    for trial_idx in range(1, n_trials + 1):
+        trial_cfg = _sample_param_config(base_model_cfg, search_space, rng, trial_idx)
+        metrics, y_pred = _evaluate_model_config(
+            model_cls=ModelCls,
+            model_config=trial_cfg,
+            train_df=train_df,
+            val_df=val_df,
+            feature_cols=feature_cols,
+            label_col=label_col,
+            task_name=task_name,
+            metric_prefix_name=resolved_model_name,
+        )
+        metric_key = f"{resolved_model_name}_{task_name}_val_{objective}"
+        if metric_key not in metrics and objective == "directional_accuracy":
+            metric_value = float(
+                np.mean(
+                    (np.asarray(val_df[label_col].values) > 0).astype(int)
+                    == (np.asarray(y_pred) > 0).astype(int)
+                )
+            )
+            metrics[metric_key] = metric_value
+        elif metric_key not in metrics:
+            raise click.ClickException(
+                f"Objective metric '{objective}' not available for model={resolved_model_name}, task={task_name}."
+            )
+        metric_value = float(metrics[metric_key])
+        score = _score_metric(objective, metric_value)
+        row = {
+            "trial": trial_idx,
+            "model": resolved_model_name,
+            "task": task_name,
+            "dataset_variant": variant_name,
+            "objective": objective,
+            "objective_value": metric_value,
+            "score": score,
+            "feature_count": len(feature_cols),
+            "train_rows": len(train_df),
+            "val_rows": len(val_df),
+            "params_json": json.dumps(trial_cfg, ensure_ascii=False, sort_keys=True),
+        }
+        row.update(metrics)
+        rows.append(row)
+
+        if score > best_score:
+            best_score = score
+            best_row = {
+                "trial": trial_idx,
+                "model": resolved_model_name,
+                "task": task_name,
+                "dataset_variant": variant_name,
+                "objective": objective,
+                "objective_value": metric_value,
+                "score": score,
+                "params": trial_cfg,
+                "metrics": metrics,
+            }
+            click.echo(
+                f"  [{trial_idx}/{n_trials}] new best: {objective}={metric_value:.6f} "
+                f"(score={score:.6f})"
+            )
+        else:
+            click.echo(
+                f"  [{trial_idx}/{n_trials}] {objective}={metric_value:.6f} "
+                f"(best={best_row['objective_value']:.6f})"
+            )
+
+    trials_df = pd.DataFrame(rows).sort_values("score", ascending=False)
+    trials_df.to_csv(trials_path, index=False, encoding="utf-8")
+    with open(best_path, "w", encoding="utf-8") as f:
+        json.dump(best_row, f, indent=2, ensure_ascii=False)
+
+    if apply_best and best_row is not None:
+        _write_best_params_to_config(
+            config_path=config,
+            exp_cfg=exp_cfg,
+            model_name=resolved_model_name,
+            task_name=task_name,
+            variant_name=variant_name,
+            params=best_row["params"],
+            objective=objective,
+            objective_value=float(best_row["objective_value"]),
+        )
+        click.echo(f"  applied best params to {config} :: tuning.best_params.{resolved_model_name}.{task_name}.{variant_name}")
+
+    if retrain_best:
+        train_cmd = [
+            sys.executable,
+            "-m",
+            "src.cli",
+            "train",
+            "--config",
+            config,
+            "--data-config",
+            data_config,
+            "--model",
+            resolved_model_name,
+            "--task",
+            task_name,
+            "--dataset-variant",
+            variant_name,
+        ]
+        _run_followup_cli_step(train_cmd, "retrain-best")
+        if run_backtest:
+            backtest_cmd = [
+                sys.executable,
+                "-m",
+                "src.cli",
+                "backtest",
+                "--config",
+                config,
+                "--data-config",
+                data_config,
+                "--model",
+                resolved_model_name,
+                "--task",
+                task_name,
+                "--dataset-variant",
+                variant_name,
+            ]
+            _run_followup_cli_step(backtest_cmd, "backtest-best")
+            if run_report:
+                report_cmd = [
+                    sys.executable,
+                    "-m",
+                    "src.cli",
+                    "report",
+                    "--config",
+                    config,
+                    "--data-config",
+                    data_config,
+                    "--model",
+                    resolved_model_name,
+                    "--task",
+                    task_name,
+                    "--dataset-variant",
+                    variant_name,
+                ]
+                _run_followup_cli_step(report_cmd, "report-best")
+
+    click.secho(
+        f"\n✓ tuning complete → {trials_path}\n"
+        f"  best_config={best_path}",
+        fg="green",
+        bold=True,
+    )
+
+
 # ── train ─────────────────────────────────────────────────────
 
 @cli.command("train")
@@ -878,6 +1389,8 @@ def train(
         resolved_model_name,
         exp_cfg.get("models", {}),
         task=task_name,
+        exp_cfg=exp_cfg,
+        variant_name=variant_name,
     )
 
     fold_results, pred_df = _run_walk_forward_compat(
@@ -1134,6 +1647,8 @@ def predict_latest(
             resolved_model_name,
             exp_cfg.get("models", {}),
             task=task_name,
+            exp_cfg=exp_cfg,
+            variant_name=variant_name,
         )
         model_path, meta_path = _model_artifact_paths(
             exp_cfg=exp_cfg,
@@ -1987,7 +2502,92 @@ def experiment_summary(config: str, data_config: str, cost_bps: float):
 
     out_csv = out_dir / f"{prefix}_experiment_summary.csv"
     out_md = out_dir / f"{prefix}_experiment_summary.md"
+    selection_csv = out_dir / f"{prefix}_selection_summary.csv"
+    selection_md = out_dir / f"{prefix}_selection_summary.md"
     sort_df.to_csv(out_csv, index=False, encoding="utf-8")
+
+    def _pick_row(task_name: str, purpose: str) -> Optional[pd.Series]:
+        task_df = sort_df[sort_df["task"] == task_name].copy()
+        if task_df.empty:
+            return None
+        if purpose == "experiment":
+            if task_name == "classification":
+                metric_col = "predictive_score"
+                ascending = False
+                tie_cols = ["trading_score"]
+                tie_ascending = [False]
+            else:
+                metric_col = "rmse"
+                ascending = True
+                tie_cols = ["ic", "trading_score"]
+                tie_ascending = [False, False]
+        else:
+            metric_col = "trading_score"
+            ascending = False
+            tie_cols = ["sharpe_ratio", "max_drawdown"]
+            tie_ascending = [False, False]
+        available_sort_cols = [metric_col] + [c for c in tie_cols if c in task_df.columns]
+        available_ascending = [ascending] + tie_ascending[: len(available_sort_cols) - 1]
+        task_df = task_df.sort_values(available_sort_cols, ascending=available_ascending, na_position="last")
+        return task_df.iloc[0]
+
+    selection_rows: list[dict] = []
+    for task_name in ("classification", "regression"):
+        experiment_row = _pick_row(task_name, "experiment")
+        if experiment_row is not None:
+            selection_rows.append(
+                {
+                    "selection_type": f"{task_name}_experiment_winner",
+                    "task": task_name,
+                    "model": experiment_row["model"],
+                    "variant": experiment_row["variant"],
+                    "selected_feature_count": experiment_row.get("selected_feature_count"),
+                    "predictive_score": experiment_row.get("predictive_score"),
+                    "trading_score": experiment_row.get("trading_score"),
+                    "cumulative_return": experiment_row.get("cumulative_return"),
+                    "sharpe_ratio": experiment_row.get("sharpe_ratio"),
+                    "max_drawdown": experiment_row.get("max_drawdown"),
+                    "rule": "classification: highest F1; regression: lowest RMSE, tie-break by IC then trading score",
+                }
+            )
+        return_row = _pick_row(task_name, "return")
+        if return_row is not None:
+            selection_rows.append(
+                {
+                    "selection_type": f"{task_name}_return_winner",
+                    "task": task_name,
+                    "model": return_row["model"],
+                    "variant": return_row["variant"],
+                    "selected_feature_count": return_row.get("selected_feature_count"),
+                    "predictive_score": return_row.get("predictive_score"),
+                    "trading_score": return_row.get("trading_score"),
+                    "cumulative_return": return_row.get("cumulative_return"),
+                    "sharpe_ratio": return_row.get("sharpe_ratio"),
+                    "max_drawdown": return_row.get("max_drawdown"),
+                    "rule": "highest cumulative return, tie-break by Sharpe then drawdown",
+                }
+            )
+
+    regression_return_row = _pick_row("regression", "return")
+    if regression_return_row is not None:
+        selection_rows.append(
+            {
+                "selection_type": "final_return_model",
+                "task": "regression",
+                "model": regression_return_row["model"],
+                "variant": regression_return_row["variant"],
+                "selected_feature_count": regression_return_row.get("selected_feature_count"),
+                "predictive_score": regression_return_row.get("predictive_score"),
+                "trading_score": regression_return_row.get("trading_score"),
+                "cumulative_return": regression_return_row.get("cumulative_return"),
+                "sharpe_ratio": regression_return_row.get("sharpe_ratio"),
+                "max_drawdown": regression_return_row.get("max_drawdown"),
+                "rule": "final model for return prediction: regression return winner",
+            }
+        )
+
+    selection_df = pd.DataFrame(selection_rows)
+    selection_df.to_csv(selection_csv, index=False, encoding="utf-8")
 
     with open(out_md, "w", encoding="utf-8") as f:
         f.write("# Experiment Summary\n\n")
@@ -2021,10 +2621,39 @@ def experiment_summary(config: str, data_config: str, cost_bps: float):
             f.write(_dataframe_to_markdown(task_df[cols]))
             f.write("\n\n")
 
+    with open(selection_md, "w", encoding="utf-8") as f:
+        f.write("# Selection Summary\n\n")
+        f.write(f"- config_name: `{exp_cfg.get('experiment_name', 'unknown')}`\n")
+        f.write(f"- artifact_prefix: `{prefix}`\n")
+        f.write(f"- summary_cost_bps: `{cost_bps}`\n\n")
+        f.write("## Rules\n\n")
+        f.write("- Classification experiment winner: highest F1.\n")
+        f.write("- Regression experiment winner: lowest RMSE, tie-break by IC then trading score.\n")
+        f.write("- Return winner: highest cumulative return, tie-break by Sharpe then drawdown.\n")
+        f.write("- Final return model: regression return winner.\n\n")
+        if not selection_df.empty:
+            cols = [
+                "selection_type",
+                "task",
+                "model",
+                "variant",
+                "selected_feature_count",
+                "predictive_score",
+                "trading_score",
+                "cumulative_return",
+                "sharpe_ratio",
+                "max_drawdown",
+                "rule",
+            ]
+            f.write(_dataframe_to_markdown(selection_df[cols]))
+            f.write("\n")
+
     click.echo("\n── Experiment Summary ──")
     click.echo(sort_df.to_string(index=False))
     click.secho(f"\n✓ experiment summary → {out_csv}", fg="green", bold=True)
     click.echo(f"  markdown : {out_md}")
+    click.echo(f"  selection: {selection_csv}")
+    click.echo(f"  sel_md   : {selection_md}")
 
 
 # ── validate ─────────────────────────────────────────────────
