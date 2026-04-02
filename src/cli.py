@@ -38,6 +38,7 @@ def _force_utf8_runtime() -> None:
     """Harden CLI runtime encoding on Windows before any file IO."""
     if os.name == "nt":
         os.environ.setdefault("PYTHONUTF8", "1")
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         if hasattr(sys.stderr, "reconfigure"):
@@ -132,6 +133,34 @@ def _resolve_model(model_name: str, model_cfg: dict, task: str = "regression"):
             cfg = _task_cfg("lgbm")
         cfg["task"] = task
         return XGBoostModel, cfg
+    elif m == "lstm":
+        from src.models.lstm import LSTMModel
+        cfg = _task_cfg("lstm")
+        if not cfg:
+            cfg = model_cfg.get("deep_learning", {}) if isinstance(model_cfg.get("deep_learning", {}), dict) else {}
+        cfg["task"] = task
+        return LSTMModel, cfg
+    elif m in ("cnn_lstm", "cnnlstm"):
+        from src.models.cnn_lstm import CNNLSTMModel
+        cfg = _task_cfg("cnn_lstm")
+        if not cfg:
+            cfg = model_cfg.get("deep_learning", {}) if isinstance(model_cfg.get("deep_learning", {}), dict) else {}
+        cfg["task"] = task
+        return CNNLSTMModel, cfg
+    elif m == "gru":
+        from src.models.gru import GRUModel
+        cfg = _task_cfg("gru")
+        if not cfg:
+            cfg = model_cfg.get("deep_learning", {}) if isinstance(model_cfg.get("deep_learning", {}), dict) else {}
+        cfg["task"] = task
+        return GRUModel, cfg
+    elif m == "tcn":
+        from src.models.tcn import TCNModel
+        cfg = _task_cfg("tcn")
+        if not cfg:
+            cfg = model_cfg.get("deep_learning", {}) if isinstance(model_cfg.get("deep_learning", {}), dict) else {}
+        cfg["task"] = task
+        return TCNModel, cfg
     elif m == "svm":
         from src.models.svm import SVMModel
         cfg = _task_cfg("svm")
@@ -145,7 +174,7 @@ def _resolve_model(model_name: str, model_cfg: dict, task: str = "regression"):
     else:
         raise ValueError(
             f"Unknown or unimplemented model: {model_name}. "
-            "Implemented now: ridge, lasso, lgbm, svm, rf."
+            "Implemented now: ridge, lasso, lgbm, xgboost, svm, rf, lstm, cnn_lstm, gru, tcn."
         )
 
 
@@ -810,6 +839,7 @@ def train(
 
     exp_name = exp_cfg["experiment_name"]
     prefix = _artifact_prefix(exp_cfg)
+    symbol = exp_cfg.get("symbol", "BTC-USD")
     split_cfg = data_cfg.get("split", {})
     pred_cfg = data_cfg.get("prediction", {})
     horizon = int(pred_cfg.get("horizon", 7))

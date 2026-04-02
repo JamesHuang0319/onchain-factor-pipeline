@@ -12,6 +12,7 @@ scipy>=1.12
 # --- Model backends (fallback chain: lgbm → xgboost → sklearn HGBR) ---
 lightgbm>=4.3          # primary
 xgboost>=2.0           # fallback-1
+torch>=2.2             # DL backends: LSTM / TCN
 
 # --- Data sources ---
 yfinance>=0.2.36
