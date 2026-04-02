@@ -12,9 +12,9 @@ Commands:
   validate        – run leakage guard checks (fail fast on any violation)
 
 Example (3-command demo):
-  python -m src.cli download-data --config configs/experiment_price_only.yaml
-  python -m src.cli train          --config configs/experiment_price_only.yaml
-  python -m src.cli report         --config configs/experiment_price_only.yaml
+  python -m src.cli download-data --config configs/experiment.yaml
+  python -m src.cli train          --config configs/experiment.yaml
+  python -m src.cli report         --config configs/experiment.yaml
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import json
 import inspect
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -68,16 +69,103 @@ def _load_exp_cfg(config: str) -> dict:
     return _load_yaml(config)
 
 
-def _resolve_model(model_name: str, model_cfg: dict):
+def _artifact_prefix(exp_cfg: dict) -> str:
+    prefix = str(exp_cfg.get("artifact_prefix", "")).strip()
+    if prefix:
+        return prefix
+    return str(exp_cfg.get("experiment_name", "experiment")).strip()
+
+
+def _read_json_file(path: str | Path) -> dict:
+    with open(path, encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
+def _dataframe_to_markdown(df: pd.DataFrame) -> str:
+    cols = list(df.columns)
+    header = "| " + " | ".join(cols) + " |"
+    sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+    rows = [header, sep]
+    for _, row in df.iterrows():
+        vals = []
+        for col in cols:
+            val = row[col]
+            if pd.isna(val):
+                vals.append("")
+            elif isinstance(val, float):
+                vals.append(f"{val:.6f}")
+            else:
+                vals.append(str(val))
+        rows.append("| " + " | ".join(vals) + " |")
+    return "\n".join(rows)
+
+
+def _resolve_model(model_name: str, model_cfg: dict, task: str = "regression"):
     """Return (ModelClass, config_dict) for a given model name."""
-    if model_name == "ridge":
+    m = model_name.lower().strip()
+
+    def _task_cfg(name: str) -> dict:
+        cfg = model_cfg.get(name, {})
+        if isinstance(cfg, dict) and task in cfg and isinstance(cfg[task], dict):
+            return cfg[task]
+        return cfg if isinstance(cfg, dict) else {}
+
+    if m == "ridge":
         from src.models.ridge import RidgeModel
-        return RidgeModel, model_cfg.get("ridge", {})
-    elif model_name in ("lgbm", "gbm", "xgboost"):
+        cfg = _task_cfg("ridge")
+        cfg["task"] = task
+        return RidgeModel, cfg
+    elif m == "lasso":
+        from src.models.lasso import LassoModel
+        cfg = _task_cfg("lasso")
+        cfg["task"] = task
+        return LassoModel, cfg
+    elif m in ("lgbm", "gbm"):
         from src.models.lgbm import GBMModel
-        return GBMModel, model_cfg.get("lgbm", {})
+        cfg = _task_cfg("lgbm")
+        cfg["task"] = task
+        return GBMModel, cfg
+    elif m in ("xgboost", "xgb"):
+        from src.models.xgb import XGBoostModel
+        cfg = _task_cfg("xgboost")
+        if not cfg:
+            cfg = _task_cfg("lgbm")
+        cfg["task"] = task
+        return XGBoostModel, cfg
+    elif m == "svm":
+        from src.models.svm import SVMModel
+        cfg = _task_cfg("svm")
+        cfg["task"] = task
+        return SVMModel, cfg
+    elif m in ("rf", "random_forest"):
+        from src.models.rf import RFModel
+        cfg = _task_cfg("rf")
+        cfg["task"] = task
+        return RFModel, cfg
     else:
-        raise ValueError(f"Unknown model: {model_name}")
+        raise ValueError(
+            f"Unknown or unimplemented model: {model_name}. "
+            "Implemented now: ridge, lasso, lgbm, svm, rf."
+        )
+
+
+def _resolve_selected_model(model_name: Optional[str], exp_cfg: dict) -> str:
+    """
+    Resolve model from CLI first, then config.
+    Forces explicit decision by user/config and avoids silent defaults.
+    """
+    if model_name:
+        return model_name.strip().lower()
+    selected = (
+        exp_cfg.get("decision", {})
+        .get("selected_model")
+    )
+    if isinstance(selected, str) and selected.strip():
+        return selected.strip().lower()
+    raise click.ClickException(
+        "Model is not selected. Pass --model explicitly or set "
+        "decision.selected_model in configs/experiment.yaml."
+    )
 
 
 def _run_walk_forward_compat(run_walk_forward_fn, **kwargs):
@@ -85,6 +173,420 @@ def _run_walk_forward_compat(run_walk_forward_fn, **kwargs):
     if "horizon" not in inspect.signature(run_walk_forward_fn).parameters:
         kwargs.pop("horizon", None)
     return run_walk_forward_fn(**kwargs)
+
+
+def _resolve_task(task: Optional[str], exp_cfg: dict, data_cfg: dict) -> str:
+    if task in ("regression", "classification"):
+        return task
+    tasks_cfg = exp_cfg.get("tasks", {})
+    if tasks_cfg.get("regression", {}).get("enabled", False):
+        return "regression"
+    if tasks_cfg.get("classification", {}).get("enabled", False):
+        return "classification"
+    # Safe fallback aligned with current pipeline behavior.
+    _ = data_cfg
+    return "regression"
+
+
+def _resolve_dataset_variant(dataset_variant: Optional[str], exp_cfg: dict) -> str:
+    if dataset_variant:
+        return dataset_variant
+    configured = exp_cfg.get("datasets", {}).get("variants", [])
+    if "all" in configured:
+        return "all"
+    return configured[0] if configured else "all"
+
+
+def _resolve_label_col(task: str, exp_cfg: dict, data_cfg: dict) -> str:
+    if task == "classification":
+        return (
+            exp_cfg.get("tasks", {})
+            .get("classification", {})
+            .get(
+                "label_col",
+                data_cfg.get("prediction", {}).get("classification_target_col", "direction_h"),
+            )
+        )
+    return (
+        exp_cfg.get("tasks", {})
+        .get("regression", {})
+        .get("label_col", data_cfg.get("prediction", {}).get("target_col", "log_ret_h"))
+    )
+
+
+def _glassnode_cfg(data_cfg: dict) -> dict:
+    onchain_cfg = data_cfg.get("onchain", {})
+    providers = onchain_cfg.get("providers", {})
+    gn_cfg = providers.get("glassnode", {})
+    return {
+        "use_glassnode": bool(gn_cfg.get("enabled", False)),
+        "glassnode_metrics": gn_cfg.get("metrics", []) or [],
+        "glassnode_cache_dir": gn_cfg.get("cache_dir", "data/raw/glassnode"),
+        "glassnode_api_key_env": gn_cfg.get("api_key_env", "GLASSNODE_API_KEY"),
+        "glassnode_asset": gn_cfg.get("asset", "BTC"),
+        "glassnode_interval": gn_cfg.get("interval", "24h"),
+    }
+
+
+def _onchain_cfg(data_cfg: dict) -> dict:
+    onchain_cfg = data_cfg.get("onchain", {})
+    providers = onchain_cfg.get("providers", {})
+    primary = str(onchain_cfg.get("primary_provider", "blockchain")).strip().lower()
+
+    blockchain_cfg = providers.get("blockchain", {})
+    coinmetrics_cfg = providers.get("coinmetrics", {})
+
+    if primary == "coinmetrics":
+        metrics = coinmetrics_cfg.get("metrics", []) or []
+        cache_dir = coinmetrics_cfg.get("cache_dir", "data/raw/coinmetrics")
+    else:
+        metrics = onchain_cfg.get("metrics", []) or []
+        cache_dir = blockchain_cfg.get("cache_dir", onchain_cfg.get("cache_dir", "data/raw/blockchain"))
+
+    return {
+        "onchain_provider": primary,
+        "onchain_metrics": metrics,
+        "onchain_timespan": blockchain_cfg.get("timespan", onchain_cfg.get("timespan", "all")),
+        "onchain_cache_dir": blockchain_cfg.get("cache_dir", onchain_cfg.get("cache_dir", "data/raw/blockchain")),
+        "coinmetrics_cache_dir": coinmetrics_cfg.get("cache_dir", "data/raw/coinmetrics"),
+        "coinmetrics_asset": coinmetrics_cfg.get("asset", "btc"),
+        "coinmetrics_frequency": coinmetrics_cfg.get("frequency", "1d"),
+        "coinmetrics_start_time": coinmetrics_cfg.get("start_time"),
+        "coinmetrics_end_time": coinmetrics_cfg.get("end_time"),
+        "resolved_metrics": metrics,
+        "resolved_cache_dir": cache_dir,
+    }
+
+
+def _build_dataset_kwargs(
+    exp_cfg: dict,
+    data_cfg: dict,
+    force: bool = False,
+    output_path: Optional[str] = None,
+    drop_label_na: bool = True,
+) -> dict:
+    feat_cfg = exp_cfg.get("features", {})
+    pred_cfg = data_cfg.get("prediction", {})
+    onchain_cfg = _onchain_cfg(data_cfg)
+    return {
+        "symbol": exp_cfg.get("symbol", "BTC-USD"),
+        "start_date": data_cfg["price"]["start_date"],
+        "end_date": data_cfg["price"].get("end_date"),
+        "horizon": int(pred_cfg.get("horizon", 1)),
+        "label_horizon_days": int(exp_cfg.get("label_horizon_days", pred_cfg.get("horizon", 1))),
+        "use_price": feat_cfg.get("price_factors", True),
+        "use_onchain": feat_cfg.get("onchain_factors", False),
+        "use_macro": feat_cfg.get("macro_factors", False),
+        "price_cache_dir": data_cfg["price"]["cache_dir"],
+        "onchain_provider": onchain_cfg["onchain_provider"],
+        "onchain_metrics": onchain_cfg["onchain_metrics"],
+        "onchain_timespan": onchain_cfg["onchain_timespan"],
+        "onchain_cache_dir": onchain_cfg["onchain_cache_dir"],
+        "coinmetrics_cache_dir": onchain_cfg["coinmetrics_cache_dir"],
+        "coinmetrics_asset": onchain_cfg["coinmetrics_asset"],
+        "coinmetrics_frequency": onchain_cfg["coinmetrics_frequency"],
+        "coinmetrics_start_time": onchain_cfg["coinmetrics_start_time"],
+        "coinmetrics_end_time": onchain_cfg["coinmetrics_end_time"],
+        **_glassnode_cfg(data_cfg),
+        "macro_cache_dir": data_cfg.get("macro", {}).get("cache_dir", "data/raw/macro"),
+        "macro_use_dummy": data_cfg.get("macro", {}).get("use_dummy", True),
+        "macro_lag_days": data_cfg.get("macro", {}).get("release_lag_days", 1),
+        "force_download": force,
+        "output_path": output_path,
+        "drop_label_na": drop_label_na,
+    }
+
+
+def _load_or_build_feature_dataset(
+    exp_cfg: dict,
+    data_cfg: dict,
+    *,
+    force: bool = False,
+    keep_unlabeled_tail: bool = False,
+) -> pd.DataFrame:
+    prefix = _artifact_prefix(exp_cfg)
+    feat_path = f"data/features/{prefix}.parquet"
+
+    if Path(feat_path).exists() and not keep_unlabeled_tail and not force:
+        df = pd.read_parquet(feat_path)
+        logger.info(f"Loaded features from {feat_path} ({df.shape})")
+        return df
+
+    from src.datasets.build_dataset import build_dataset
+
+    if Path(feat_path).exists() and keep_unlabeled_tail and not force:
+        logger.info("Rebuilding feature dataset to retain latest unlabeled row for prediction.")
+    elif not Path(feat_path).exists():
+        logger.info("Feature file not found, building dataset …")
+
+    return build_dataset(
+        **_build_dataset_kwargs(
+            exp_cfg,
+            data_cfg,
+            force=force,
+            output_path=None if keep_unlabeled_tail else feat_path,
+            drop_label_na=not keep_unlabeled_tail,
+        )
+    )
+
+
+def _resolve_feature_cols_for_variant(
+    df: pd.DataFrame,
+    task_name: str,
+    variant_name: str,
+    exp_cfg: dict,
+    data_cfg: dict,
+) -> tuple[str, list[str]]:
+    from src.datasets.build_dataset import get_feature_cols_by_variant
+
+    label_col = _resolve_label_col(task_name, exp_cfg, data_cfg)
+    feature_cols = get_feature_cols_by_variant(
+        df,
+        label_col=label_col,
+        dataset_variant=variant_name,
+    )
+    if variant_name.startswith("boruta_"):
+        labeled_df = df.dropna(subset=[label_col]).copy()
+        feature_cols = _apply_boruta_lasso_feature_selection(
+            df=labeled_df,
+            feature_cols=feature_cols,
+            label_col=label_col,
+            task=task_name,
+            exp_cfg=exp_cfg,
+            data_cfg=data_cfg,
+        )
+    if not feature_cols:
+        raise RuntimeError(
+            f"No features resolved for dataset_variant={variant_name}. "
+            "Check feature-engineering columns and config."
+        )
+    return label_col, feature_cols
+
+
+def _model_artifact_paths(
+    exp_cfg: dict,
+    model_name: str,
+    task_name: str,
+    variant_name: str,
+) -> tuple[Path, Path]:
+    model_dir = Path(exp_cfg.get("output", {}).get("model_dir", "models_saved"))
+    model_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{_artifact_prefix(exp_cfg)}_{model_name}_{task_name}_{variant_name}"
+    return model_dir / f"{stem}.pkl", model_dir / f"{stem}_meta.json"
+
+
+def _split_final_fit_data(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    val_months: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    labeled = df.dropna(subset=feature_cols + [label_col]).copy()
+    if len(labeled) < 50:
+        raise RuntimeError(
+            f"Too few labeled rows ({len(labeled)}) for final model fit."
+        )
+    val_days = max(20, int(round(val_months * 30)))
+    if len(labeled) > val_days + 50:
+        return labeled.iloc[:-val_days].copy(), labeled.iloc[-val_days:].copy()
+    return labeled.copy(), pd.DataFrame(columns=labeled.columns)
+
+
+def _fit_final_model(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    model_cls,
+    model_config: dict,
+    val_months: float,
+):
+    train_df, val_df = _split_final_fit_data(
+        df=df,
+        feature_cols=feature_cols,
+        label_col=label_col,
+        val_months=val_months,
+    )
+    model = model_cls(config=model_config)
+    model.fit(
+        train_df[feature_cols],
+        train_df[label_col].values,
+        val_df[feature_cols] if len(val_df) else None,
+        val_df[label_col].values if len(val_df) else None,
+    )
+    return model, train_df, val_df
+
+
+def _apply_boruta_proxy_selection(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    task: str,
+    exp_cfg: dict,
+    data_cfg: dict,
+) -> list[str]:
+    """
+    Lightweight Boruta-like proxy feature filtering.
+    Uses train-only chronological subset and RF importances.
+    """
+    if len(feature_cols) <= 1:
+        return feature_cols
+    split_cfg = data_cfg.get("split", {})
+    train_ratio = float(split_cfg.get("train_ratio", 0.8))
+    cut = max(1, int(len(df) * train_ratio))
+    train_df = df.iloc[:cut].dropna(subset=feature_cols + [label_col])
+    if len(train_df) < 50:
+        logger.warning("[feature_select] Too few rows for Boruta proxy; skipping.")
+        return feature_cols
+
+    boruta_cfg = exp_cfg.get("datasets", {}).get("boruta", {})
+    n_estimators = int(boruta_cfg.get("n_estimators", 300))
+    rs = int(boruta_cfg.get("random_state", 42))
+
+    X = train_df[feature_cols]
+    y = train_df[label_col].values
+
+    try:
+        if task == "classification":
+            from sklearn.ensemble import RandomForestClassifier
+            rf = RandomForestClassifier(
+                n_estimators=n_estimators,
+                random_state=rs,
+                n_jobs=-1,
+            )
+        else:
+            from sklearn.ensemble import RandomForestRegressor
+            rf = RandomForestRegressor(
+                n_estimators=n_estimators,
+                random_state=rs,
+                n_jobs=-1,
+            )
+        rf.fit(X, y)
+        importances = np.asarray(rf.feature_importances_, dtype=float)
+        threshold = float(np.nanmedian(importances))
+        selected = [c for c, imp in zip(feature_cols, importances) if float(imp) >= threshold]
+        if not selected:
+            selected = feature_cols
+        logger.info(
+            f"[feature_select] Boruta proxy kept {len(selected)}/{len(feature_cols)} features."
+        )
+        return selected
+    except Exception as exc:
+        logger.warning(f"[feature_select] Boruta proxy failed ({exc}); using all features.")
+        return feature_cols
+
+
+def _apply_lasso_refinement_selection(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    task: str,
+    exp_cfg: dict,
+    data_cfg: dict,
+) -> list[str]:
+    """
+    Lasso/L1 refinement on top of Boruta-selected features.
+    - regression: Lasso
+    - classification: LogisticRegression(L1)
+    """
+    if len(feature_cols) <= 1:
+        return feature_cols
+    split_cfg = data_cfg.get("split", {})
+    train_ratio = float(split_cfg.get("train_ratio", 0.8))
+    cut = max(1, int(len(df) * train_ratio))
+    train_df = df.iloc[:cut].dropna(subset=feature_cols + [label_col])
+    if len(train_df) < 80:
+        logger.warning("[feature_select] Too few rows for Lasso refinement; skipping.")
+        return feature_cols
+
+    fs_cfg = exp_cfg.get("datasets", {}).get("feature_selection", {})
+    lasso_cfg = fs_cfg.get("lasso", {})
+    coef_eps = float(lasso_cfg.get("coef_threshold", 1e-8))
+    rs = int(lasso_cfg.get("random_state", 42))
+
+    X = train_df[feature_cols]
+    y = train_df[label_col].values
+
+    try:
+        if task == "classification":
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.pipeline import Pipeline
+            from sklearn.preprocessing import StandardScaler
+
+            clf = LogisticRegression(
+                penalty="l1",
+                solver=str(lasso_cfg.get("solver", "liblinear")),
+                C=float(lasso_cfg.get("C", 0.5)),
+                class_weight=lasso_cfg.get("class_weight", "balanced"),
+                max_iter=int(lasso_cfg.get("max_iter", 2000)),
+                random_state=rs,
+            )
+            pipe = Pipeline([("scaler", StandardScaler()), ("l1", clf)])
+            pipe.fit(X, y)
+            coefs = np.abs(pipe.named_steps["l1"].coef_).ravel()
+        else:
+            from sklearn.linear_model import Lasso
+            from sklearn.pipeline import Pipeline
+            from sklearn.preprocessing import StandardScaler
+
+            reg = Lasso(
+                alpha=float(lasso_cfg.get("alpha", 0.001)),
+                max_iter=int(lasso_cfg.get("max_iter", 5000)),
+                tol=float(lasso_cfg.get("tol", 1e-4)),
+                random_state=rs,
+            )
+            pipe = Pipeline([("scaler", StandardScaler()), ("l1", reg)])
+            pipe.fit(X, y)
+            coefs = np.abs(pipe.named_steps["l1"].coef_).ravel()
+
+        selected = [c for c, coef in zip(feature_cols, coefs) if float(coef) > coef_eps]
+        if not selected:
+            # Keep strongest few if all coefficients shrink to zero.
+            topk = max(1, min(10, len(feature_cols)))
+            order = np.argsort(-coefs)[:topk]
+            selected = [feature_cols[i] for i in order]
+        logger.info(
+            f"[feature_select] Lasso refinement kept {len(selected)}/{len(feature_cols)} features."
+        )
+        return selected
+    except Exception as exc:
+        logger.warning(f"[feature_select] Lasso refinement failed ({exc}); keeping Boruta set.")
+        return feature_cols
+
+
+def _apply_boruta_lasso_feature_selection(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    task: str,
+    exp_cfg: dict,
+    data_cfg: dict,
+) -> list[str]:
+    """
+    Two-stage feature extraction:
+      1) Boruta proxy (RF importance filter)
+      2) Lasso/L1 refinement
+    """
+    fs_cfg = exp_cfg.get("datasets", {}).get("feature_selection", {})
+    method = str(fs_cfg.get("method", "boruta_lasso")).lower()
+
+    boruta_selected = _apply_boruta_proxy_selection(
+        df=df,
+        feature_cols=feature_cols,
+        label_col=label_col,
+        task=task,
+        exp_cfg=exp_cfg,
+        data_cfg=data_cfg,
+    )
+    if method in ("boruta_lasso", "lasso_boruta", "boruta+lasso"):
+        return _apply_lasso_refinement_selection(
+            df=df,
+            feature_cols=boruta_selected,
+            label_col=label_col,
+            task=task,
+            exp_cfg=exp_cfg,
+            data_cfg=data_cfg,
+        )
+    return boruta_selected
 
 
 # ── CLI group ─────────────────────────────────────────────────
@@ -98,7 +600,7 @@ def cli():
 # ── download-data ─────────────────────────────────────────────
 
 @cli.command("download-data")
-@click.option("--config", default="configs/experiment_price_only.yaml",
+@click.option("--config", default="configs/experiment.yaml",
               help="Experiment config YAML path.")
 @click.option("--data-config", default="configs/data.yaml",
               help="Data sources config YAML path.")
@@ -113,8 +615,9 @@ def download_data(config: str, data_config: str, force: bool):
     start      = data_cfg["price"]["start_date"]
     end        = data_cfg["price"].get("end_date")
     price_dir  = data_cfg["price"]["cache_dir"]
-    onchain_dir= data_cfg["onchain"]["cache_dir"]
-    use_onchain= exp_cfg.get("features", {}).get("onchain_factors", False)
+    onchain_cfg = _onchain_cfg(data_cfg)
+    use_onchain = exp_cfg.get("features", {}).get("onchain_factors", False)
+    gn_cfg = _glassnode_cfg(data_cfg)
 
     # Price
     from src.ingest.price import download_price
@@ -124,11 +627,45 @@ def download_data(config: str, data_config: str, force: bool):
 
     # On-chain (Iter-1+)
     if use_onchain:
-        from src.ingest.onchain import load_onchain
-        metrics = data_cfg["onchain"]["metrics"]
-        logger.info(f"Downloading on-chain metrics: {metrics} …")
-        oc = load_onchain(metrics=metrics, cache_dir=onchain_dir, force=force)
-        logger.info(f"  ✓ On-chain: {len(oc)} rows, {oc.shape[1]} metrics")
+        provider = onchain_cfg["onchain_provider"]
+        metrics = onchain_cfg["resolved_metrics"]
+        logger.info(f"Downloading on-chain metrics from {provider}: {metrics} …")
+        if provider == "coinmetrics":
+            from src.ingest.coinmetrics import load_coinmetrics
+
+            oc = load_coinmetrics(
+                metrics=metrics,
+                asset=onchain_cfg["coinmetrics_asset"],
+                frequency=onchain_cfg["coinmetrics_frequency"],
+                start_time=onchain_cfg["coinmetrics_start_time"],
+                end_time=onchain_cfg["coinmetrics_end_time"],
+                cache_dir=onchain_cfg["resolved_cache_dir"],
+                force=force,
+            )
+        else:
+            from src.ingest.onchain import load_onchain
+
+            oc = load_onchain(
+                metrics=[str(m) for m in metrics if isinstance(m, str)] or None,
+                timespan=onchain_cfg["onchain_timespan"],
+                cache_dir=onchain_cfg["resolved_cache_dir"],
+                force=force,
+            )
+        logger.info(f"  ✓ On-chain ({provider}): {len(oc)} rows, {oc.shape[1]} columns")
+        if gn_cfg["use_glassnode"] and gn_cfg["glassnode_metrics"]:
+            from src.ingest.glassnode import load_glassnode
+            logger.info(
+                f"Downloading Glassnode metrics: {len(gn_cfg['glassnode_metrics'])} configured …"
+            )
+            gn = load_glassnode(
+                metrics=gn_cfg["glassnode_metrics"],
+                cache_dir=gn_cfg["glassnode_cache_dir"],
+                force=force,
+                api_key_env=gn_cfg["glassnode_api_key_env"],
+                asset=gn_cfg["glassnode_asset"],
+                interval=gn_cfg["glassnode_interval"],
+            )
+            logger.info(f"  ✓ Glassnode: {len(gn)} rows, {gn.shape[1]} columns")
 
     click.secho("✓ download-data complete.", fg="green", bold=True)
 
@@ -136,7 +673,7 @@ def download_data(config: str, data_config: str, force: bool):
 # ── build-features ────────────────────────────────────────────
 
 @cli.command("build-features")
-@click.option("--config", default="configs/experiment_price_only.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
 @click.option("--force", is_flag=True, default=False)
 def build_features(config: str, data_config: str, force: bool):
@@ -144,79 +681,147 @@ def build_features(config: str, data_config: str, force: bool):
     exp_cfg  = _load_exp_cfg(config)
     data_cfg = _load_data_cfg(data_config)
 
-    exp_name    = exp_cfg["experiment_name"]
-    symbol      = exp_cfg.get("symbol", "BTC-USD")
-    feat_cfg    = exp_cfg.get("features", {})
-    pred_cfg    = data_cfg.get("prediction", {})
-    horizon     = int(pred_cfg.get("horizon", 7))
-
-    out_path = f"data/features/{exp_name}_{symbol.replace('-','_')}.parquet"
+    out_path = f"data/features/{_artifact_prefix(exp_cfg)}.parquet"
 
     from src.datasets.build_dataset import build_dataset
-    df = build_dataset(
-        symbol=symbol,
-        start_date=data_cfg["price"]["start_date"],
-        end_date=data_cfg["price"].get("end_date"),
-        horizon=horizon,
-        use_price=feat_cfg.get("price_factors", True),
-        use_onchain=feat_cfg.get("onchain_factors", False),
-        use_macro=feat_cfg.get("macro_factors", False),
-        price_cache_dir=data_cfg["price"]["cache_dir"],
-        onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
-        macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
-        macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
-        force_download=force,
-        output_path=out_path,
-    )
+    df = build_dataset(**_build_dataset_kwargs(exp_cfg, data_cfg, force=force, output_path=out_path))
     logger.info(f"Dataset shape: {df.shape}")
     click.secho(f"✓ build-features complete → {out_path}", fg="green", bold=True)
+
+
+# ── data-audit ───────────────────────────────────────────────
+
+@cli.command("data-audit")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option(
+    "--dataset-variant",
+    default="all",
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+)
+def data_audit(config: str, data_config: str, dataset_variant: str):
+    """Run data quality audit and export CSV summaries."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+
+    prefix = _artifact_prefix(exp_cfg)
+    pred_cfg = data_cfg.get("prediction", {})
+    split_cfg = data_cfg.get("split", {})
+
+    feat_path = f"data/features/{_artifact_prefix(exp_cfg)}.parquet"
+    if not Path(feat_path).exists():
+        click.echo("Feature file not found, running build-features first …")
+        from src.datasets.build_dataset import build_dataset
+
+        _ = build_dataset(**_build_dataset_kwargs(exp_cfg, data_cfg, output_path=feat_path))
+
+    df = pd.read_parquet(feat_path)
+    from src.datasets.build_dataset import DIRECTION_LABEL_COL, get_feature_cols_by_variant
+    from src.datasets.data_audit import run_data_audit, save_data_audit
+
+    label_col = pred_cfg.get("target_col", "log_ret_h")
+    cls_col = pred_cfg.get("classification_target_col", DIRECTION_LABEL_COL)
+    feature_cols = get_feature_cols_by_variant(df, label_col=label_col, dataset_variant=dataset_variant)
+
+    result = run_data_audit(
+        df=df,
+        label_col=label_col,
+        classification_label_col=cls_col,
+        feature_cols=feature_cols,
+        train_ratio=float(split_cfg.get("train_ratio", 0.8)),
+    )
+    out_root = data_cfg.get("artifacts", {}).get("data_audit_dir", "reports/00_summary/data_audit")
+    out_dir = Path(out_root) / prefix / dataset_variant
+    paths = save_data_audit(result, out_dir)
+
+    click.echo("\n── Data Audit Summary ──")
+    click.echo(result.summary.to_string(index=False))
+    click.echo("\n── Split Info ──")
+    click.echo(result.split_info.to_string(index=False))
+    click.echo("\n── Class Balance ──")
+    click.echo(result.class_balance.to_string(index=False))
+    click.echo("\nSaved files:")
+    for k, p in paths.items():
+        click.echo(f"  {k}: {p}")
+
+
+# ── pipeline-prepare ──────────────────────────────────────────
+
+@cli.command("pipeline-prepare")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--force", is_flag=True, default=False)
+@click.option(
+    "--dataset-variant",
+    default="all",
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+)
+def pipeline_prepare(config: str, data_config: str, force: bool, dataset_variant: str):
+    """
+    Prepare data pipeline without model commitment:
+    download -> build-features -> data-audit -> validate.
+    """
+    ctx = click.get_current_context()
+    click.echo("\n[1/4] download-data")
+    ctx.invoke(download_data, config=config, data_config=data_config, force=force)
+    click.echo("\n[2/4] build-features")
+    ctx.invoke(build_features, config=config, data_config=data_config, force=force)
+    click.echo("\n[3/4] data-audit")
+    ctx.invoke(data_audit, config=config, data_config=data_config, dataset_variant=dataset_variant)
+    click.echo("\n[4/4] validate")
+    ctx.invoke(validate, config=config, data_config=data_config)
+    click.secho("\n✓ pipeline-prepare complete. Data foundation is ready for model selection.", fg="green", bold=True)
 
 
 # ── train ─────────────────────────────────────────────────────
 
 @cli.command("train")
-@click.option("--config", default="configs/experiment_price_only.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default="lgbm",
-              type=click.Choice(["ridge", "lgbm"]), help="Model to train.")
-def train(config: str, data_config: str, model_name: str):
+@click.option("--model", "model_name", default=None, type=str, help="Model to train.")
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Prediction task. Default resolves from config.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+def train(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+):
     """Run walk-forward training and save predictions."""
     exp_cfg  = _load_exp_cfg(config)
     data_cfg = _load_data_cfg(data_config)
 
     exp_name = exp_cfg["experiment_name"]
-    symbol   = exp_cfg.get("symbol", "BTC-USD")
-    split_cfg= data_cfg.get("split", {})
+    prefix = _artifact_prefix(exp_cfg)
+    split_cfg = data_cfg.get("split", {})
     pred_cfg = data_cfg.get("prediction", {})
     horizon = int(pred_cfg.get("horizon", 7))
-    seed     = int(data_cfg.get("random_seed", 42))
+    seed = int(data_cfg.get("random_seed", 42))
+    task_name = _resolve_task(task, exp_cfg, data_cfg)
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
+    label_col = _resolve_label_col(task_name, exp_cfg, data_cfg)
     np.random.seed(seed)
 
-    # Load or build dataset
-    feat_path = f"data/features/{exp_name}_{symbol.replace('-','_')}.parquet"
-    if not Path(feat_path).exists():
-        click.echo("Feature file not found, running build-features first …")
-        from src.datasets.build_dataset import build_dataset
-        feat_cfg = exp_cfg.get("features", {})
-        df = build_dataset(
-            symbol=symbol,
-            start_date=data_cfg["price"]["start_date"],
-            end_date=data_cfg["price"].get("end_date"),
-            horizon=horizon,
-            use_price=feat_cfg.get("price_factors", True),
-            use_onchain=feat_cfg.get("onchain_factors", False),
-            use_macro=feat_cfg.get("macro_factors", False),
-            price_cache_dir=data_cfg["price"]["cache_dir"],
-            onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
-            macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
-            macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
-            output_path=feat_path,
-        )
-    else:
-        df = pd.read_parquet(feat_path)
-        logger.info(f"Loaded features from {feat_path} ({df.shape})")
+    df = _load_or_build_feature_dataset(exp_cfg, data_cfg)
 
-    from src.datasets.build_dataset import get_feature_cols, LABEL_COL
     from src.evaluation.ic_diagnostics import (
         generate_ic_figures,
         sample_alignment_rows,
@@ -224,18 +829,32 @@ def train(config: str, data_config: str, model_name: str):
         upsert_rows,
     )
     from src.evaluation.walk_forward import fold_results_to_table, run_walk_forward
-    from src.evaluation.metrics import compute_metrics, rank_ic
+    from src.evaluation.metrics import (
+        compute_classification_metrics,
+        compute_metrics,
+        rank_ic,
+    )
 
-    feature_cols = get_feature_cols(df, LABEL_COL)
-    logger.info(f"Feature count: {len(feature_cols)}")
+    label_col, feature_cols = _resolve_feature_cols_for_variant(
+        df=df,
+        task_name=task_name,
+        variant_name=variant_name,
+        exp_cfg=exp_cfg,
+        data_cfg=data_cfg,
+    )
+    logger.info(f"Feature count ({variant_name}): {len(feature_cols)}")
 
-    ModelCls, model_cfg = _resolve_model(model_name, exp_cfg.get("models", {}))
+    ModelCls, model_cfg = _resolve_model(
+        resolved_model_name,
+        exp_cfg.get("models", {}),
+        task=task_name,
+    )
 
     fold_results, pred_df = _run_walk_forward_compat(
         run_walk_forward,
         df=df,
         feature_cols=feature_cols,
-        label_col=LABEL_COL,
+        label_col=label_col,
         model_cls=ModelCls,
         model_config=model_cfg,
         train_years=float(split_cfg.get("train_years", 3)),
@@ -247,33 +866,47 @@ def train(config: str, data_config: str, model_name: str):
     )
 
     # ── Aggregate metrics ──────────────────────────────────────
-    all_metrics = compute_metrics(
-        pred_df["y_true"].values,
-        pred_df["y_pred"].values,
-        prefix=f"{model_name}_oos",
-    )
-    ric = rank_ic(pred_df["y_true"].values, pred_df["y_pred"].values)
-    all_metrics[f"{model_name}_oos_rank_ic"] = ric
+    metric_prefix = f"{resolved_model_name}_{task_name}_oos"
+    if task_name == "classification":
+        all_metrics = compute_classification_metrics(
+            pred_df["y_true"].values,
+            pred_df["y_pred"].values,
+            prefix=metric_prefix,
+            threshold=0.5,
+        )
+    else:
+        all_metrics = compute_metrics(
+            pred_df["y_true"].values,
+            pred_df["y_pred"].values,
+            prefix=metric_prefix,
+        )
+        ric = rank_ic(pred_df["y_true"].values, pred_df["y_pred"].values)
+        all_metrics[f"{resolved_model_name}_oos_rank_ic"] = ric
 
     click.echo("\n── Out-of-sample metrics ──")
     for k, v in all_metrics.items():
         click.echo(f"  {k}: {v:.4f}")
 
     # ── Save predictions ───────────────────────────────────────
-    pred_out = f"data/features/{exp_name}_{symbol.replace('-','_')}_{model_name}_preds.parquet"
+    pred_out = (
+        f"data/features/{prefix}_{resolved_model_name}_"
+        f"{task_name}_{variant_name}_preds.parquet"
+    )
     pred_df.to_parquet(pred_out)
     logger.info(f"Predictions saved → {pred_out}")
 
     # ── Save metrics ───────────────────────────────────────────
-    metrics_out = f"data/features/{exp_name}_{model_name}_metrics.json"
+    metrics_out = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_metrics.json"
+    )
     with open(metrics_out, "w", encoding="utf-8") as f:
         json.dump(all_metrics, f, indent=2)
 
-    # ── Save per-fold IC table (Iter-1C artifact) ─────────────
+    # ── Save per-fold diagnostics table ────────────────────────
     ic_table = fold_results_to_table(
         fold_results=fold_results,
-        config_name=exp_name,
-        model_name=model_name,
+        config_name=f"{exp_name}:{task_name}:{variant_name}",
+        model_name=resolved_model_name,
     )
     reports_dir = Path("reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -284,7 +917,7 @@ def train(config: str, data_config: str, model_name: str):
     ic_table.to_csv(ic_path, index=False, encoding="utf-8")
     logger.info(f"IC table saved → {ic_path}")
 
-    # ── Save diagnostics table (Iter-1D artifact) ────────────
+    # ── Save diagnostics table ────────────────────────────────
     diag_table = ic_table.copy()
     diag_table["ic_negative"] = diag_table["IC"] < 0
     diag_path = reports_dir / "ic_diagnostics.csv"
@@ -295,8 +928,8 @@ def train(config: str, data_config: str, model_name: str):
 
     # ── Print IC diagnostics summary for current run ──────────
     run_diag = diag_table[
-        (diag_table["config_name"] == exp_name)
-        & (diag_table["model_name"] == model_name)
+        (diag_table["config_name"] == f"{exp_name}:{task_name}:{variant_name}")
+        & (diag_table["model_name"] == resolved_model_name)
     ]
     stats = summarize_ic(run_diag)
     click.echo("\n── IC diagnostics summary ──")
@@ -307,27 +940,39 @@ def train(config: str, data_config: str, model_name: str):
     click.echo(f"  Best fold IC: {stats['best_fold_ic']:.6f}")
     click.echo(f"  Worst fold IC: {stats['worst_fold_ic']:.6f}")
 
-    # ── Alignment sanity check (diagnostic only) ──────────────
-    samples = sample_alignment_rows(pred_df, n=3, seed=seed)
-    click.echo("\n── Alignment sanity check (3 sampled test dates) ──")
-    if samples.empty:
-        click.echo("  No valid rows for alignment sampling.")
-    else:
-        bad_alignment = False
-        for dt, row in samples.iterrows():
-            diff = abs(float(row["y_true"]) - float(row["manual_log_return"]))
-            click.echo(f"  date: {pd.Timestamp(dt).date().isoformat()}")
-            click.echo(f"    pred: {float(row['y_pred']):.10f}")
-            click.echo(f"    label: {float(row['y_true']):.10f}")
-            click.echo(f"    close_t: {float(row['close_t']):.10f}")
-            click.echo(f"    close_t+7: {float(row['close_t_plus_h']):.10f}")
-            click.echo(f"    manual_log_return: {float(row['manual_log_return']):.10f}")
-            if diff >= 1e-10:
-                bad_alignment = True
-        if bad_alignment:
-            click.echo("WARNING: POSSIBLE LABEL MISALIGNMENT")
+    # ── Alignment sanity check (regression only) ──────────────
+    if task_name == "regression":
+        required_cols = {
+            "y_pred",
+            "y_true",
+            "close_t",
+            "close_t_plus_h",
+            "manual_log_return",
+            "alignment_abs_err",
+        }
+        if required_cols.issubset(set(pred_df.columns)):
+            samples = sample_alignment_rows(pred_df, n=3, seed=seed)
+            click.echo("\n── Alignment sanity check (3 sampled test dates) ──")
+            if samples.empty:
+                click.echo("  No valid rows for alignment sampling.")
+            else:
+                bad_alignment = False
+                for dt, row in samples.iterrows():
+                    diff = abs(float(row["y_true"]) - float(row["manual_log_return"]))
+                    click.echo(f"  date: {pd.Timestamp(dt).date().isoformat()}")
+                    click.echo(f"    pred: {float(row['y_pred']):.10f}")
+                    click.echo(f"    label: {float(row['y_true']):.10f}")
+                    click.echo(f"    close_t: {float(row['close_t']):.10f}")
+                    click.echo(f"    close_t+7: {float(row['close_t_plus_h']):.10f}")
+                    click.echo(f"    manual_log_return: {float(row['manual_log_return']):.10f}")
+                    if diff >= 1e-10:
+                        bad_alignment = True
+                if bad_alignment:
+                    click.echo("WARNING: POSSIBLE LABEL MISALIGNMENT")
+                else:
+                    click.echo("  Alignment check passed: |label - manual_log_return| < 1e-10")
         else:
-            click.echo("  Alignment check passed: |label - manual_log_return| < 1e-10")
+            click.echo("\n── Alignment sanity check skipped (required columns unavailable) ──")
 
     # ── Generate Matplotlib diagnostics figures ───────────────
     generated = generate_ic_figures(diag_table, reports_dir)
@@ -335,16 +980,209 @@ def train(config: str, data_config: str, model_name: str):
         for fp in generated:
             logger.info(f"IC diagnostic figure → {fp}")
 
-    click.secho(f"\n✓ train complete → {pred_out}", fg="green", bold=True)
+    # ── Save final full-fit model for deployment/latest prediction ──
+    final_model, final_train_df, final_val_df = _fit_final_model(
+        df=df,
+        feature_cols=feature_cols,
+        label_col=label_col,
+        model_cls=ModelCls,
+        model_config=model_cfg,
+        val_months=float(split_cfg.get("val_months", 6)),
+    )
+    final_model_path, final_meta_path = _model_artifact_paths(
+        exp_cfg=exp_cfg,
+        model_name=resolved_model_name,
+        task_name=task_name,
+        variant_name=variant_name,
+    )
+    final_model.save(final_model_path)
+    final_meta = {
+        "experiment_name": exp_name,
+        "artifact_prefix": prefix,
+        "symbol": symbol,
+        "model": resolved_model_name,
+        "task": task_name,
+        "dataset_variant": variant_name,
+        "label_col": label_col,
+        "feature_cols": feature_cols,
+        "feature_count": len(feature_cols),
+        "train_rows": len(final_train_df),
+        "validation_rows": len(final_val_df),
+        "train_start": final_train_df.index.min().date().isoformat(),
+        "train_end": final_train_df.index.max().date().isoformat(),
+        "validation_start": (
+            final_val_df.index.min().date().isoformat() if len(final_val_df) else None
+        ),
+        "validation_end": (
+            final_val_df.index.max().date().isoformat() if len(final_val_df) else None
+        ),
+        "saved_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "config_path": config,
+        "data_config_path": data_config,
+        "model_config": model_cfg,
+    }
+    with open(final_meta_path, "w", encoding="utf-8") as f:
+        json.dump(final_meta, f, indent=2, ensure_ascii=False)
+    logger.info(f"Final model saved → {final_model_path}")
+    logger.info(f"Final model metadata saved → {final_meta_path}")
+
+    click.secho(
+        f"\n✓ train complete → {pred_out}\n"
+        f"  task={task_name}, dataset_variant={variant_name}, label={label_col}, model={resolved_model_name}\n"
+        f"  final_model={final_model_path}",
+        fg="green",
+        bold=True,
+    )
+
+
+# ── predict-latest ───────────────────────────────────────────
+
+@cli.command("predict-latest")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--model", "model_name", default=None, type=str, help="Model to use.")
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Prediction task. Default: run all enabled tasks.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+@click.option("--force", is_flag=True, default=False, help="Force re-download/rebuild latest data.")
+def predict_latest(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+    force: bool,
+):
+    """Fit on full history and predict the latest available row."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
+    df = _load_or_build_feature_dataset(
+        exp_cfg,
+        data_cfg,
+        force=force,
+        keep_unlabeled_tail=True,
+    )
+
+    tasks_to_run: list[str]
+    if task:
+        tasks_to_run = [task]
+    else:
+        tasks_cfg = exp_cfg.get("tasks", {})
+        tasks_to_run = [
+            name for name in ("classification", "regression")
+            if tasks_cfg.get(name, {}).get("enabled", False)
+        ] or ["regression"]
+
+    split_cfg = data_cfg.get("split", {})
+    out_dir = Path("reports/00_summary/latest_predictions")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+
+    for task_name in tasks_to_run:
+        label_col, feature_cols = _resolve_feature_cols_for_variant(
+            df=df,
+            task_name=task_name,
+            variant_name=variant_name,
+            exp_cfg=exp_cfg,
+            data_cfg=data_cfg,
+        )
+        ModelCls, model_cfg = _resolve_model(
+            resolved_model_name,
+            exp_cfg.get("models", {}),
+            task=task_name,
+        )
+        model_path, meta_path = _model_artifact_paths(
+            exp_cfg=exp_cfg,
+            model_name=resolved_model_name,
+            task_name=task_name,
+            variant_name=variant_name,
+        )
+
+        feature_ready = df.dropna(subset=feature_cols).copy()
+        if feature_ready.empty:
+            raise RuntimeError(
+                f"No feature-complete rows available for latest prediction ({task_name}, {variant_name})."
+            )
+        latest_row = feature_ready.iloc[[-1]].copy()
+        predict_date = pd.Timestamp(latest_row.index[-1])
+
+        labeled = (
+            df.loc[df.index < predict_date]
+            .dropna(subset=feature_cols + [label_col])
+            .copy()
+        )
+        if model_path.exists() and meta_path.exists() and not force:
+            model = ModelCls.load(model_path)
+            meta = _read_json_file(meta_path)
+            feature_cols = list(meta.get("feature_cols", feature_cols))
+            train_rows = int(meta.get("train_rows", 0))
+            val_rows = int(meta.get("validation_rows", 0))
+        else:
+            model, train_df, val_df = _fit_final_model(
+                df=labeled,
+                feature_cols=feature_cols,
+                label_col=label_col,
+                model_cls=ModelCls,
+                model_config=model_cfg,
+                val_months=float(split_cfg.get("val_months", 6)),
+            )
+            train_rows = int(len(train_df))
+            val_rows = int(len(val_df))
+        pred_value = float(model.predict(latest_row[feature_cols])[0])
+
+        if task_name == "classification":
+            predicted_direction = "up" if pred_value >= 0.5 else "down"
+            score_name = "up_probability"
+        else:
+            predicted_direction = "up" if pred_value > 0 else "down"
+            score_name = "predicted_log_return"
+
+        row = {
+            "task": task_name,
+            "model": resolved_model_name,
+            "dataset_variant": variant_name,
+            "predict_date": predict_date.date().isoformat(),
+            "trained_rows": train_rows,
+            "validation_rows": val_rows,
+            "feature_count": int(len(feature_cols)),
+            "predicted_direction": predicted_direction,
+            score_name: pred_value,
+            "model_artifact": str(model_path) if model_path.exists() else None,
+        }
+        rows.append(row)
+
+    result_df = pd.DataFrame(rows)
+    timestamp = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%SZ")
+    out_path = out_dir / f"{_artifact_prefix(exp_cfg)}_latest_{resolved_model_name}_{variant_name}_{timestamp}.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=2, ensure_ascii=False)
+
+    click.echo("\n── Latest Prediction ──")
+    click.echo(result_df.to_string(index=False))
+    click.echo(f"\nSaved JSON: {out_path}")
 
 
 # ── horizon-sweep ────────────────────────────────────────────
 
 @cli.command("horizon-sweep")
-@click.option("--config", default="configs/experiment_price_onchain.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
 @click.option("--model", "model_name", default="lgbm",
-              type=click.Choice(["ridge", "lgbm"]))
+              type=click.Choice(["ridge", "lasso", "lgbm", "svm", "rf"]))
 def horizon_sweep(config: str, data_config: str, model_name: str):
     """Run horizon sensitivity study and export structured diagnostics."""
     exp_cfg = _load_exp_cfg(config)
@@ -355,37 +1193,18 @@ def horizon_sweep(config: str, data_config: str, model_name: str):
         horizons = [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180]
     horizons = [int(h) for h in horizons]
 
-    symbol = exp_cfg.get("symbol", "BTC-USD")
     split_cfg = data_cfg.get("split", {})
-    feat_cfg = exp_cfg.get("features", {})
-    model_cfg = exp_cfg.get("models", {}).get(model_name, {})
-    if model_name == "lgbm":
-        from src.models.lgbm import GBMModel as ModelCls
-    else:
-        from src.models.ridge import RidgeModel as ModelCls
+    ModelCls, model_cfg = _resolve_model(model_name, exp_cfg.get("models", {}), task="regression")
 
     from src.datasets.build_dataset import LABEL_COL, build_dataset, get_feature_cols
     from src.evaluation.walk_forward import run_walk_forward
 
     rows: list[dict] = []
     for h in horizons:
-        df = build_dataset(
-            symbol=symbol,
-            start_date=data_cfg["price"]["start_date"],
-            end_date=data_cfg["price"].get("end_date"),
-            horizon=h,
-            label_horizon_days=h,
-            use_price=feat_cfg.get("price_factors", True),
-            use_onchain=feat_cfg.get("onchain_factors", False),
-            use_macro=feat_cfg.get("macro_factors", False),
-            price_cache_dir=data_cfg["price"]["cache_dir"],
-            onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
-            macro_cache_dir=data_cfg.get("macro", {}).get("cache_dir", "data/raw/macro"),
-            macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
-            macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
-            force_download=False,
-            output_path=None,
-        )
+        ds_kwargs = _build_dataset_kwargs(exp_cfg, data_cfg, output_path=None)
+        ds_kwargs["horizon"] = h
+        ds_kwargs["label_horizon_days"] = h
+        df = build_dataset(**ds_kwargs)
         feature_cols = get_feature_cols(df, LABEL_COL)
         fold_results, _ = _run_walk_forward_compat(
             run_walk_forward,
@@ -483,7 +1302,7 @@ def horizon_sweep(config: str, data_config: str, model_name: str):
 # ── feature-horizon-matrix ──────────────────────────────────
 
 @cli.command("feature-horizon-matrix")
-@click.option("--config", default="configs/experiment_price_onchain.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
 @click.option("--topk", default=25, type=int, help="Top-K features for heatmap.")
 def feature_horizon_matrix(config: str, data_config: str, topk: int):
@@ -496,9 +1315,7 @@ def feature_horizon_matrix(config: str, data_config: str, topk: int):
         horizons = [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180]
     horizons = [int(h) for h in horizons]
 
-    symbol = exp_cfg.get("symbol", "BTC-USD")
     split_cfg = data_cfg.get("split", {})
-    feat_cfg = exp_cfg.get("features", {})
 
     from src.datasets.build_dataset import LABEL_COL, build_dataset, get_feature_cols
     from src.evaluation.metrics import ic, rank_ic
@@ -506,23 +1323,10 @@ def feature_horizon_matrix(config: str, data_config: str, topk: int):
 
     rows: list[dict] = []
     for h in horizons:
-        df = build_dataset(
-            symbol=symbol,
-            start_date=data_cfg["price"]["start_date"],
-            end_date=data_cfg["price"].get("end_date"),
-            horizon=h,
-            label_horizon_days=h,
-            use_price=feat_cfg.get("price_factors", True),
-            use_onchain=feat_cfg.get("onchain_factors", False),
-            use_macro=feat_cfg.get("macro_factors", False),
-            price_cache_dir=data_cfg["price"]["cache_dir"],
-            onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
-            macro_cache_dir=data_cfg.get("macro", {}).get("cache_dir", "data/raw/macro"),
-            macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
-            macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
-            force_download=False,
-            output_path=None,
-        )
+        ds_kwargs = _build_dataset_kwargs(exp_cfg, data_cfg, output_path=None)
+        ds_kwargs["horizon"] = h
+        ds_kwargs["label_horizon_days"] = h
+        df = build_dataset(**ds_kwargs)
         df_clean = df.dropna(subset=[LABEL_COL]).copy()
         feature_cols = get_feature_cols(df_clean, LABEL_COL)
         folds = generate_folds(
@@ -616,10 +1420,10 @@ def feature_horizon_matrix(config: str, data_config: str, topk: int):
 # ── stability-regime ────────────────────────────────────────
 
 @cli.command("stability-regime")
-@click.option("--config", default="configs/experiment_price_onchain.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
 @click.option("--model", "model_name", default="lgbm",
-              type=click.Choice(["ridge", "lgbm"]))
+              type=click.Choice(["ridge", "lasso", "lgbm", "svm", "rf"]))
 @click.option("--rolling-window", default=180, type=int)
 def stability_regime(
     config: str, data_config: str, model_name: str, rolling_window: int
@@ -628,8 +1432,6 @@ def stability_regime(
     exp_cfg = _load_exp_cfg(config)
     data_cfg = _load_data_cfg(data_config)
     split_cfg = data_cfg.get("split", {})
-    symbol = exp_cfg.get("symbol", "BTC-USD")
-    feat_cfg = exp_cfg.get("features", {})
     pred_cfg = data_cfg.get("prediction", {})
     horizon = int(pred_cfg.get("horizon", 7))
 
@@ -637,24 +1439,11 @@ def stability_regime(
     from src.evaluation.metrics import ic, rank_ic
     from src.evaluation.walk_forward import run_walk_forward
 
-    ModelCls, model_cfg = _resolve_model(model_name, exp_cfg.get("models", {}))
-    df = build_dataset(
-        symbol=symbol,
-        start_date=data_cfg["price"]["start_date"],
-        end_date=data_cfg["price"].get("end_date"),
-        horizon=horizon,
-        label_horizon_days=horizon,
-        use_price=feat_cfg.get("price_factors", True),
-        use_onchain=feat_cfg.get("onchain_factors", False),
-        use_macro=feat_cfg.get("macro_factors", False),
-        price_cache_dir=data_cfg["price"]["cache_dir"],
-        onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
-        macro_cache_dir=data_cfg.get("macro", {}).get("cache_dir", "data/raw/macro"),
-        macro_use_dummy=data_cfg.get("macro", {}).get("use_dummy", True),
-        macro_lag_days=data_cfg.get("macro", {}).get("release_lag_days", 1),
-        force_download=False,
-        output_path=None,
-    )
+    ModelCls, model_cfg = _resolve_model(model_name, exp_cfg.get("models", {}), task="regression")
+    ds_kwargs = _build_dataset_kwargs(exp_cfg, data_cfg, output_path=None)
+    ds_kwargs["horizon"] = horizon
+    ds_kwargs["label_horizon_days"] = horizon
+    df = build_dataset(**ds_kwargs)
     feature_cols = get_feature_cols(df, LABEL_COL)
     _, pred_df = _run_walk_forward_compat(
         run_walk_forward,
@@ -778,21 +1567,46 @@ def stability_regime(
 # ── backtest ──────────────────────────────────────────────────
 
 @cli.command("backtest")
-@click.option("--config", default="configs/experiment_price_only.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default="lgbm",
-              type=click.Choice(["ridge", "lgbm"]))
-def backtest(config: str, data_config: str, model_name: str):
+@click.option("--model", "model_name", default=None, type=str)
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Prediction task. Default resolves from config.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+def backtest(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+):
     """Run backtest on saved predictions and print performance table."""
     exp_cfg  = _load_exp_cfg(config)
     data_cfg = _load_data_cfg(data_config)
 
-    exp_name    = exp_cfg["experiment_name"]
-    symbol      = exp_cfg.get("symbol", "BTC-USD")
-    strat_cfg   = exp_cfg.get("strategy", {})
-    cost_list   = strat_cfg.get("cost_bps", [5, 10, 20])
+    prefix = _artifact_prefix(exp_cfg)
+    symbol = exp_cfg.get("symbol", "BTC-USD")
+    strat_cfg = exp_cfg.get("strategy", {})
+    cost_list = strat_cfg.get("cost_bps", [5, 10, 20])
+    task_name = _resolve_task(task, exp_cfg, data_cfg)
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
 
-    pred_path = f"data/features/{exp_name}_{symbol.replace('-','_')}_{model_name}_preds.parquet"
+    pred_path = (
+        f"data/features/{prefix}_{resolved_model_name}_"
+        f"{task_name}_{variant_name}_preds.parquet"
+    )
     if not Path(pred_path).exists():
         click.secho(f"Prediction file not found: {pred_path}\nRun 'train' first.", fg="red")
         sys.exit(1)
@@ -815,6 +1629,8 @@ def backtest(config: str, data_config: str, model_name: str):
     from src.backtest.backtester import sensitivity_analysis, run_backtest
 
     predictions = pred_df["y_pred"]
+    if task_name == "classification":
+        predictions = predictions.astype(float) - 0.5
     signal = make_signal(
         predictions,
         mode=strat_cfg.get("mode", "long_only"),
@@ -823,14 +1639,24 @@ def backtest(config: str, data_config: str, model_name: str):
     )
 
     sensitivity_df = sensitivity_analysis(price_df, signal, cost_bps_list=cost_list)
-    click.echo(f"\n── Backtest Sensitivity (symbol={symbol}, model={model_name}) ──")
+    click.echo(
+        f"\n── Backtest Sensitivity (symbol={symbol}, model={resolved_model_name}, "
+        f"task={task_name}, variant={variant_name}) ──"
+    )
     click.echo(sensitivity_df.to_string())
+
+    sensitivity_path = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_backtest_sensitivity.csv"
+    )
+    sensitivity_df.reset_index().to_csv(sensitivity_path, index=False, encoding="utf-8")
 
     # Save equity curve for default cost
     default_bps = float(strat_cfg.get("default_cost_bps", 10))
     result = run_backtest(price_df, signal, cost_bps=default_bps)
     equity = result["equity"]
-    equity_path = f"data/features/{exp_name}_{model_name}_equity.parquet"
+    equity_path = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_equity.parquet"
+    )
     equity.to_frame("equity").to_parquet(equity_path)
 
     click.secho(f"\n✓ backtest complete (equity → {equity_path})", fg="green", bold=True)
@@ -839,24 +1665,52 @@ def backtest(config: str, data_config: str, model_name: str):
 # ── report ────────────────────────────────────────────────────
 
 @cli.command("report")
-@click.option("--config", default="configs/experiment_price_only.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default="lgbm",
-              type=click.Choice(["ridge", "lgbm"]))
-def report(config: str, data_config: str, model_name: str):
+@click.option("--model", "model_name", default=None, type=str)
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Prediction task. Default resolves from config.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+def report(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+):
     """Generate all figures and write summary HTML report."""
     exp_cfg  = _load_exp_cfg(config)
     data_cfg = _load_data_cfg(data_config)
 
     exp_name = exp_cfg["experiment_name"]
-    symbol   = exp_cfg.get("symbol", "BTC-USD")
-    fig_dir  = Path(exp_cfg.get("output", {}).get("figures_dir", "reports/figures"))
-    trd_dir  = Path(exp_cfg.get("output", {}).get("trading_dir", "reports/trading"))
+    prefix = _artifact_prefix(exp_cfg)
+    symbol = exp_cfg.get("symbol", "BTC-USD")
+    fig_dir = Path(exp_cfg.get("output", {}).get("figures_dir", "reports/figures"))
+    trd_dir = Path(exp_cfg.get("output", {}).get("trading_dir", "reports/trading"))
     strat_cfg = exp_cfg.get("strategy", {})
+    task_name = _resolve_task(task, exp_cfg, data_cfg)
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
 
     # ── Load predictions ───────────────────────────────────────
-    pred_path = f"data/features/{exp_name}_{symbol.replace('-','_')}_{model_name}_preds.parquet"
-    equity_path = f"data/features/{exp_name}_{model_name}_equity.parquet"
+    pred_path = (
+        f"data/features/{prefix}_{resolved_model_name}_"
+        f"{task_name}_{variant_name}_preds.parquet"
+    )
+    equity_path = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_equity.parquet"
+    )
 
     if not Path(pred_path).exists():
         click.secho("Run 'train' and 'backtest' first.", fg="red"); sys.exit(1)
@@ -880,23 +1734,24 @@ def report(config: str, data_config: str, model_name: str):
 
     if Path(equity_path).exists():
         equity = pd.read_parquet(equity_path)["equity"]
-        eq_path  = plot_equity_curves({model_name: equity}, out_dir=fig_dir,
-                                      filename=f"{exp_name}_{model_name}_equity.pdf")
+        eq_path  = plot_equity_curves({resolved_model_name: equity}, out_dir=fig_dir,
+                                      filename=f"{prefix}_{resolved_model_name}_{task_name}_{variant_name}_equity.pdf")
         dd_path  = plot_drawdown(equity, out_dir=fig_dir,
-                                 filename=f"{exp_name}_{model_name}_drawdown.pdf")
+                                 filename=f"{prefix}_{resolved_model_name}_{task_name}_{variant_name}_drawdown.pdf")
         logger.info(f"Equity → {eq_path}")
         logger.info(f"Drawdown → {dd_path}")
 
     pa_path = plot_pred_vs_actual(y_true, y_pred, out_dir=fig_dir,
-                                  filename=f"{exp_name}_{model_name}_pred_vs_actual.pdf")
+                                  filename=f"{prefix}_{resolved_model_name}_{task_name}_{variant_name}_pred_vs_actual.pdf")
     logger.info(f"Pred vs Actual → {pa_path}")
 
     # ── Plotly interactive chart ───────────────────────────────
     from src.backtest.strategy import make_signal
     from src.visualization.plotly_trading_chart import make_trading_chart
 
+    signal_scores = y_pred.astype(float) - 0.5 if task_name == "classification" else y_pred
     signal = make_signal(
-        y_pred,
+        signal_scores,
         mode=strat_cfg.get("mode", "long_only"),
         top_quantile=float(strat_cfg.get("top_quantile", 0.2)),
         bottom_quantile=float(strat_cfg.get("bottom_quantile", 0.2)),
@@ -906,33 +1761,41 @@ def report(config: str, data_config: str, model_name: str):
         predictions=y_pred,
         signal=signal,
         symbol=symbol,
-        model_name=model_name,
+        model_name=resolved_model_name,
         out_dir=trd_dir,
     )
     logger.info(f"Plotly chart → {html_path}")
 
     # ── Load metrics ───────────────────────────────────────────
-    metrics_path = f"data/features/{exp_name}_{model_name}_metrics.json"
+    metrics_path = f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_metrics.json"
     metrics = {}
     if Path(metrics_path).exists():
-        with open(metrics_path, encoding="utf-8") as f:
-            metrics = json.load(f)
+        metrics = _read_json_file(metrics_path)
 
     # ── Write markdown summary ─────────────────────────────────
-    feat_path = f"data/features/{exp_name}_{symbol.replace('-','_')}.parquet"
+    feat_path = f"data/features/{prefix}.parquet"
     n_feat = 0
     if Path(feat_path).exists():
-        from src.datasets.build_dataset import get_feature_cols, LABEL_COL
+        from src.datasets.build_dataset import get_feature_cols_by_variant
         tmp = pd.read_parquet(feat_path)
-        n_feat = len(get_feature_cols(tmp, LABEL_COL))
+        label_col = _resolve_label_col(task_name, exp_cfg, data_cfg)
+        n_feat = len(
+            get_feature_cols_by_variant(
+                tmp,
+                label_col=label_col,
+                dataset_variant=variant_name,
+            )
+        )
 
     Path("reports").mkdir(exist_ok=True)
-    summary_path = Path("reports/summary.md")
+    summary_path = Path(f"reports/{prefix}_summary_{resolved_model_name}_{task_name}_{variant_name}.md")
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(f"# Crypto Predict — Summary Report\n\n")
         f.write(f"**Experiment**: `{exp_name}`  \n")
         f.write(f"**Symbol**: `{symbol}`  \n")
-        f.write(f"**Model**: `{model_name}`  \n")
+        f.write(f"**Model**: `{resolved_model_name}`  \n")
+        f.write(f"**Task**: `{task_name}`  \n")
+        f.write(f"**Dataset Variant**: `{variant_name}`  \n")
         f.write(f"**Feature count**: {n_feat}  \n\n")
         f.write("## Out-of-Sample Metrics\n\n| Metric | Value |\n|---|---|\n")
         for k, v in metrics.items():
@@ -946,34 +1809,210 @@ def report(config: str, data_config: str, model_name: str):
     click.echo(f"  Figures dir  : {fig_dir}/")
 
 
+@cli.command("experiment-summary")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--cost-bps", default=5.0, type=float, show_default=True)
+def experiment_summary(config: str, data_config: str, cost_bps: float):
+    """Aggregate metrics/backtests into a ranking table for current experiment."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+    prefix = _artifact_prefix(exp_cfg)
+
+    out_dir = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/00_summary"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    feature_path = Path(f"data/features/{prefix}.parquet")
+    feature_df = pd.read_parquet(feature_path) if feature_path.exists() else None
+
+    model_names = [m.lower() for m in exp_cfg.get("comparison", {}).get("ml_models", [])]
+    model_names += [m.lower() for m in exp_cfg.get("comparison", {}).get("dl_models", [])]
+    model_names += ["xgboost", "gbm"]
+    model_names = sorted(set(model_names), key=len, reverse=True)
+
+    def parse_metrics_name(path: Path) -> tuple[str, str, str] | None:
+        stem = path.stem
+        base = f"{prefix}_"
+        if not stem.startswith(base) or not stem.endswith("_metrics"):
+            return None
+        body = stem[len(base):-len("_metrics")]
+        for model in model_names:
+            marker = f"{model}_"
+            if body.startswith(marker):
+                rest = body[len(marker):]
+                for task_name in ("classification", "regression"):
+                    task_marker = f"{task_name}_"
+                    if rest.startswith(task_marker):
+                        variant = rest[len(task_marker):]
+                        return model, task_name, variant
+        return None
+
+    def selected_feature_count(model: str, task_name: str, variant: str) -> Optional[int]:
+        meta_path = Path(f"models_saved/{prefix}_{model}_{task_name}_{variant}_meta.json")
+        if meta_path.exists():
+            meta = _read_json_file(meta_path)
+            if "feature_cols" in meta:
+                return len(meta["feature_cols"])
+        train_log = Path(f"reports/batch_runs/{model}_{task_name}_{variant}_train.log")
+        if train_log.exists():
+            text = train_log.read_text(encoding="utf-8", errors="ignore")
+            lasso_match = re.findall(r"Lasso refinement kept (\d+)/(\d+) features", text)
+            if lasso_match:
+                return int(lasso_match[-1][0])
+            boruta_match = re.findall(r"Boruta proxy kept (\d+)/(\d+) features", text)
+            if boruta_match:
+                return int(boruta_match[-1][0])
+        if feature_df is not None:
+            from src.datasets.build_dataset import get_feature_cols_by_variant
+            label_col = _resolve_label_col(task_name, exp_cfg, data_cfg)
+            try:
+                return len(get_feature_cols_by_variant(feature_df, label_col=label_col, dataset_variant=variant))
+            except Exception:
+                return None
+        return None
+
+    def load_backtest_row(model: str, task_name: str, variant: str) -> dict:
+        csv_path = Path(
+            f"data/features/{prefix}_{model}_{task_name}_{variant}_backtest_sensitivity.csv"
+        )
+        if csv_path.exists():
+            sdf = pd.read_csv(csv_path)
+            row = sdf.loc[np.isclose(sdf["cost_bps"].astype(float), float(cost_bps))]
+            if not row.empty:
+                return row.iloc[0].to_dict()
+
+        log_path = Path(f"reports/batch_runs/{model}_{task_name}_{variant}_backtest.log")
+        if not log_path.exists():
+            return {}
+        text = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        pattern = re.compile(
+            r"^\s*(?P<cost>[-0-9.]+)\s+(?P<cumulative_return>[-0-9.]+)\s+"
+            r"(?P<annualised_return>[-0-9.]+)\s+(?P<annualised_volatility>[-0-9.]+)\s+"
+            r"(?P<max_drawdown>[-0-9.]+)\s+(?P<sharpe_ratio>[-0-9.]+)\s+"
+            r"(?P<turnover>[-0-9.]+)\s+(?P<n_days>\d+)"
+        )
+        for line in text:
+            match = pattern.match(line)
+            if match and np.isclose(float(match.group("cost")), float(cost_bps)):
+                row = {k: float(v) for k, v in match.groupdict().items() if k != "n_days"}
+                row["n_days"] = int(match.group("n_days"))
+                row["cost_bps"] = float(match.group("cost"))
+                return row
+        return {}
+
+    rows: list[dict] = []
+    for metrics_path in sorted(Path("data/features").glob(f"{prefix}_*_metrics.json")):
+        parsed = parse_metrics_name(metrics_path)
+        if not parsed:
+            continue
+        model, task_name, variant = parsed
+        metrics = _read_json_file(metrics_path)
+        row = {
+            "model": model,
+            "task": task_name,
+            "variant": variant,
+            "selected_feature_count": selected_feature_count(model, task_name, variant),
+        }
+        row.update(metrics)
+        row.update(load_backtest_row(model, task_name, variant))
+        rows.append(row)
+
+    if not rows:
+        click.secho("No experiment artifacts found for summary.", fg="red")
+        sys.exit(1)
+
+    summary_df = pd.DataFrame(rows)
+    summary_df["predictive_score"] = np.nan
+    summary_df["trading_score"] = np.nan
+
+    for idx, row in summary_df.iterrows():
+        model = str(row["model"])
+        task_name = str(row["task"])
+        if task_name == "classification":
+            f1_key = f"{model}_classification_oos_f1"
+            if f1_key in summary_df.columns:
+                summary_df.at[idx, "predictive_score"] = row.get(f1_key)
+        elif task_name == "regression":
+            rmse_key = f"{model}_regression_oos_rmse"
+            ic_key = f"{model}_regression_oos_ic"
+            if rmse_key in summary_df.columns:
+                summary_df.at[idx, "rmse"] = row.get(rmse_key)
+                if pd.notna(row.get(rmse_key)):
+                    summary_df.at[idx, "predictive_score"] = -float(row.get(rmse_key))
+            if ic_key in summary_df.columns:
+                summary_df.at[idx, "ic"] = row.get(ic_key)
+
+    if "cumulative_return" in summary_df.columns:
+        summary_df["trading_score"] = summary_df["cumulative_return"]
+
+    summary_df["predictive_rank"] = (
+        summary_df.groupby("task")["predictive_score"].rank(ascending=False, method="dense")
+    )
+    summary_df["trading_rank"] = (
+        summary_df.groupby("task")["trading_score"].rank(ascending=False, method="dense")
+    )
+
+    sort_df = summary_df.sort_values(
+        ["task", "trading_rank", "predictive_rank", "model", "variant"]
+    ).reset_index(drop=True)
+
+    out_csv = out_dir / f"{prefix}_experiment_summary.csv"
+    out_md = out_dir / f"{prefix}_experiment_summary.md"
+    sort_df.to_csv(out_csv, index=False, encoding="utf-8")
+
+    with open(out_md, "w", encoding="utf-8") as f:
+        f.write("# Experiment Summary\n\n")
+        f.write(f"- config_name: `{exp_cfg.get('experiment_name', 'unknown')}`\n")
+        f.write(f"- artifact_prefix: `{prefix}`\n")
+        f.write(f"- summary_cost_bps: `{cost_bps}`\n\n")
+        for task_name in ("classification", "regression"):
+            task_df = sort_df[sort_df["task"] == task_name].copy()
+            if task_df.empty:
+                continue
+            f.write(f"## {task_name.title()}\n\n")
+            cols = ["model", "variant", "selected_feature_count", "predictive_rank", "trading_rank"]
+            if task_name == "classification":
+                metric_cols = [
+                    c for c in task_df.columns
+                    if c.endswith("_classification_oos_accuracy")
+                    or c.endswith("_classification_oos_precision")
+                    or c.endswith("_classification_oos_recall")
+                    or c.endswith("_classification_oos_f1")
+                ]
+            else:
+                metric_cols = [
+                    c for c in task_df.columns
+                    if c.endswith("_regression_oos_mae")
+                    or c.endswith("_regression_oos_rmse")
+                    or c.endswith("_regression_oos_ic")
+                    or c.endswith("_regression_oos_rank_ic")
+                ]
+            cols += [c for c in metric_cols if c in task_df.columns]
+            cols += [c for c in ["cumulative_return", "annualised_return", "sharpe_ratio", "max_drawdown"] if c in task_df.columns]
+            f.write(_dataframe_to_markdown(task_df[cols]))
+            f.write("\n\n")
+
+    click.echo("\n── Experiment Summary ──")
+    click.echo(sort_df.to_string(index=False))
+    click.secho(f"\n✓ experiment summary → {out_csv}", fg="green", bold=True)
+    click.echo(f"  markdown : {out_md}")
+
+
 # ── validate ─────────────────────────────────────────────────
 
 @cli.command("validate")
-@click.option("--config", default="configs/experiment_price_only.yaml")
+@click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
 def validate(config: str, data_config: str):
     """Run leakage guard checks. Exits with code 1 if violations found."""
     exp_cfg  = _load_exp_cfg(config)
     data_cfg = _load_data_cfg(data_config)
 
-    exp_name = exp_cfg["experiment_name"]
-    symbol   = exp_cfg.get("symbol", "BTC-USD")
-    feat_path = f"data/features/{exp_name}_{symbol.replace('-','_')}.parquet"
+    feat_path = f"data/features/{_artifact_prefix(exp_cfg)}.parquet"
 
     if not Path(feat_path).exists():
         click.secho("Feature file not found, building …", fg="yellow")
-        feat_cfg = exp_cfg.get("features", {})
         from src.datasets.build_dataset import build_dataset
-        build_dataset(
-            symbol=symbol,
-            start_date=data_cfg["price"]["start_date"],
-            use_price=feat_cfg.get("price_factors", True),
-            use_onchain=feat_cfg.get("onchain_factors", False),
-            use_macro=feat_cfg.get("macro_factors", False),
-            price_cache_dir=data_cfg["price"]["cache_dir"],
-            onchain_cache_dir=data_cfg["onchain"]["cache_dir"],
-            output_path=feat_path,
-        )
+        build_dataset(**_build_dataset_kwargs(exp_cfg, data_cfg, output_path=feat_path))
 
     df = pd.read_parquet(feat_path)
     from src.datasets.build_dataset import assert_no_leakage, LABEL_COL
@@ -987,3 +2026,5 @@ def validate(config: str, data_config: str):
 
 if __name__ == "__main__":
     cli()
+
+

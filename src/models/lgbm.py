@@ -2,7 +2,7 @@
 src/models/lgbm.py
 ──────────────────────────────────────────────────────────────
 Gradient-boosting model with fallback chain:
-  LightGBM → XGBoost → sklearn HistGradientBoostingRegressor
+  LightGBM → XGBoost → sklearn HistGradientBoosting*
 
 All seeds fixed via config["random_state"].
 """
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 def _build_gbm(config: dict[str, Any]):
     """Instantiate the best available GBM with given config."""
+    task = str(config.get("task", "regression")).lower()
     rs = int(config.get("random_state", 42))
     n_est = int(config.get("n_estimators", 300))
     lr = float(config.get("learning_rate", 0.05))
@@ -32,7 +33,7 @@ def _build_gbm(config: dict[str, Any]):
     # ── Try LightGBM first ────────────────────────────────────
     try:
         import lightgbm as lgb
-        model = lgb.LGBMRegressor(
+        common = dict(
             n_estimators=n_est,
             learning_rate=lr,
             max_depth=max_d,
@@ -46,6 +47,10 @@ def _build_gbm(config: dict[str, Any]):
             n_jobs=n_jobs,
             verbose=-1,
         )
+        if task == "classification":
+            model = lgb.LGBMClassifier(**common)
+        else:
+            model = lgb.LGBMRegressor(**common)
         logger.info("[lgbm] Using LightGBM backend.")
         return model, "lightgbm"
     except ImportError:
@@ -54,7 +59,7 @@ def _build_gbm(config: dict[str, Any]):
     # ── Fallback 1: XGBoost ───────────────────────────────────
     try:
         import xgboost as xgb
-        model = xgb.XGBRegressor(
+        common = dict(
             n_estimators=n_est,
             learning_rate=lr,
             max_depth=max_d,
@@ -66,20 +71,33 @@ def _build_gbm(config: dict[str, Any]):
             n_jobs=n_jobs,
             verbosity=0,
         )
+        if task == "classification":
+            model = xgb.XGBClassifier(**common)
+        else:
+            model = xgb.XGBRegressor(**common)
         logger.info("[lgbm] Using XGBoost backend.")
         return model, "xgboost"
     except ImportError:
         logger.warning("[lgbm] XGBoost not found, falling back to sklearn HGBR …")
 
     # ── Fallback 2: sklearn HistGradientBoostingRegressor ─────
-    from sklearn.ensemble import HistGradientBoostingRegressor
-    model = HistGradientBoostingRegressor(
-        max_iter=n_est,
-        learning_rate=lr,
-        max_depth=max_d,
-        random_state=rs,
-    )
-    logger.info("[lgbm] Using sklearn HistGradientBoostingRegressor backend.")
+    if task == "classification":
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        model = HistGradientBoostingClassifier(
+            max_iter=n_est,
+            learning_rate=lr,
+            max_depth=max_d,
+            random_state=rs,
+        )
+    else:
+        from sklearn.ensemble import HistGradientBoostingRegressor
+        model = HistGradientBoostingRegressor(
+            max_iter=n_est,
+            learning_rate=lr,
+            max_depth=max_d,
+            random_state=rs,
+        )
+    logger.info("[lgbm] Using sklearn HistGradientBoosting backend.")
     return model, "hgbr"
 
 
@@ -119,6 +137,9 @@ class GBMModel(BaseModel):
         return self
 
     def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
+        task = str(self.config.get("task", "regression")).lower()
+        if task == "classification" and hasattr(self._model, "predict_proba"):
+            return self._model.predict_proba(X)[:, 1].astype(float)
         return self._model.predict(X).astype(float)
 
     def save(self, path: str | Path) -> None:

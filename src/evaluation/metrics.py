@@ -83,6 +83,41 @@ def compute_metrics(
     }
 
 
+def compute_classification_metrics(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    prefix: str = "",
+    threshold: float = 0.5,
+) -> dict[str, float]:
+    """
+    Compute binary classification metrics from score/probability predictions.
+    """
+    y_true_bin = np.asarray(y_true).astype(int)
+    y_pred_bin = (np.asarray(y_score) >= float(threshold)).astype(int)
+    p = f"{prefix}_" if prefix else ""
+
+    tp = float(np.sum((y_true_bin == 1) & (y_pred_bin == 1)))
+    tn = float(np.sum((y_true_bin == 0) & (y_pred_bin == 0)))
+    fp = float(np.sum((y_true_bin == 0) & (y_pred_bin == 1)))
+    fn = float(np.sum((y_true_bin == 1) & (y_pred_bin == 0)))
+    n = max(1.0, tp + tn + fp + fn)
+
+    accuracy = (tp + tn) / n
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (
+        2.0 * precision * recall / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
+    return {
+        f"{p}accuracy": float(accuracy),
+        f"{p}precision": float(precision),
+        f"{p}recall": float(recall),
+        f"{p}f1": float(f1),
+    }
+
+
 def rolling_icir(
     y_true: pd.Series,
     y_pred: pd.Series,

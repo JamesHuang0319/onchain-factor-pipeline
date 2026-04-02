@@ -29,12 +29,15 @@ from src.etl.cleaner import align_and_merge, clean_onchain, clean_price
 from src.features.macro_factors import load_macro
 from src.features.onchain_factors import compute_onchain_factors
 from src.features.price_factors import compute_price_factors
+from src.ingest.coinmetrics import load_coinmetrics
+from src.ingest.glassnode import load_glassnode
 from src.ingest.onchain import load_onchain
 from src.ingest.price import download_price
 
 logger = logging.getLogger(__name__)
 
 LABEL_COL = "log_ret_h"
+DIRECTION_LABEL_COL = "direction_h"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -51,13 +54,28 @@ def build_dataset(
     use_price: bool = True,
     use_onchain: bool = False,
     use_macro: bool = False,
+    onchain_provider: str = "blockchain",
+    onchain_metrics: Optional[list[dict | str]] = None,
+    onchain_timespan: str = "all",
     price_cache_dir: str = "data/raw/yfinance",
     onchain_cache_dir: str = "data/raw/blockchain",
+    coinmetrics_cache_dir: str = "data/raw/coinmetrics",
+    coinmetrics_asset: str = "btc",
+    coinmetrics_frequency: str = "1d",
+    coinmetrics_start_time: Optional[str] = None,
+    coinmetrics_end_time: Optional[str] = None,
+    glassnode_cache_dir: str = "data/raw/glassnode",
+    use_glassnode: bool = False,
+    glassnode_metrics: Optional[list[dict | str]] = None,
+    glassnode_api_key_env: str = "GLASSNODE_API_KEY",
+    glassnode_asset: str = "BTC",
+    glassnode_interval: str = "24h",
     macro_cache_dir: str = "data/raw/macro",
     macro_use_dummy: bool = True,
     macro_lag_days: int = 1,
     force_download: bool = False,
     output_path: Optional[str] = None,
+    drop_label_na: bool = True,
 ) -> pd.DataFrame:
     """
     Build the full feature + label dataset.
@@ -86,8 +104,39 @@ def build_dataset(
     # ── 2. On-chain (optional) ────────────────────────────────
     onchain_df: Optional[pd.DataFrame] = None
     if use_onchain:
-        raw_onchain = load_onchain(cache_dir=onchain_cache_dir, force=force_download)
+        provider = str(onchain_provider).strip().lower()
+        if provider == "coinmetrics":
+            raw_onchain = load_coinmetrics(
+                metrics=onchain_metrics or [],
+                asset=coinmetrics_asset,
+                frequency=coinmetrics_frequency,
+                start_time=coinmetrics_start_time,
+                end_time=coinmetrics_end_time,
+                cache_dir=coinmetrics_cache_dir,
+                force=force_download,
+            )
+        else:
+            raw_onchain = load_onchain(
+                metrics=[
+                    str(m) for m in (onchain_metrics or [])
+                    if isinstance(m, str)
+                ] or None,
+                timespan=onchain_timespan,
+                cache_dir=onchain_cache_dir,
+                force=force_download,
+            )
         onchain_df = clean_onchain(raw_onchain)
+        if use_glassnode and glassnode_metrics:
+            raw_gn = load_glassnode(
+                metrics=glassnode_metrics,
+                cache_dir=glassnode_cache_dir,
+                force=force_download,
+                api_key_env=glassnode_api_key_env,
+                asset=glassnode_asset,
+                interval=glassnode_interval,
+            )
+            gn_df = clean_onchain(raw_gn)
+            onchain_df = pd.concat([onchain_df, gn_df], axis=1, join="outer")
 
     # ── 3. Macro (optional) ───────────────────────────────────
     macro_df: Optional[pd.DataFrame] = None
@@ -129,7 +178,9 @@ def build_dataset(
     data[LABEL_COL] = np.log(
         data["close"].shift(-h) / data["close"]
     )
-    data = data.dropna(subset=[LABEL_COL]).copy()
+    data[DIRECTION_LABEL_COL] = (data[LABEL_COL] > 0).astype(int)
+    if drop_label_na:
+        data = data.dropna(subset=[LABEL_COL]).copy()
 
     # ── 9. Anti-leakage assertion ─────────────────────────────
     assert_no_leakage(data, label_col=LABEL_COL)
@@ -202,7 +253,86 @@ def get_feature_cols(df: pd.DataFrame, label_col: str = LABEL_COL) -> list[str]:
     Return feature column names (exclude OHLCV + label + date artifacts).
     """
     non_feature = {
-        label_col, "open", "high", "low", "close", "volume",
+        label_col, LABEL_COL, DIRECTION_LABEL_COL, "open", "high", "low", "close", "volume",
         "adj_close", "adj close",
     }
     return [c for c in df.columns if c not in non_feature]
+
+
+def get_feature_cols_by_variant(
+    df: pd.DataFrame,
+    label_col: str = LABEL_COL,
+    dataset_variant: str = "all",
+) -> list[str]:
+    """
+    Return feature columns for one of the 7 dataset variants:
+      onchain, ta, all, boruta_onchain, boruta_ta, boruta_all, univariate
+    """
+    variant = dataset_variant.lower().strip()
+    base_cols = get_feature_cols(df, label_col=label_col)
+
+    onchain_metric_names = {
+        "n-transactions",
+        "n-unique-addresses",
+        "transaction-fees",
+        "estimated-transaction-volume",
+        "transfer-count",
+        "mempool-size",
+        "miners-revenue",
+        "cost-per-transaction",
+        "hash-rate",
+        "difficulty",
+        "block-count",
+        "circulating-supply",
+        "issuance",
+        "market-cap-usd",
+    }
+    onchain_prefixes = (
+        "ntx_",
+        "addr_",
+        "fees_",
+        "txvol_",
+        "txcnt_",
+        "mempool_",
+        "mrev_",
+        "cptx_",
+        "hr_",
+        "diff_",
+        "blk_",
+        "supply_",
+        "issuance_",
+        "mcap_",
+        "tx_per_addr",
+        "mrev_per_hash",
+    )
+    ta_prefixes = (
+        "mom_",
+        "vol_",
+        "ma",
+        "amplitude",
+        "hl_range_",
+        "rsi_",
+        "macd_",
+        "williams_",
+        "close_open_ret",
+    )
+
+    def _is_onchain(col: str) -> bool:
+        if col in onchain_metric_names:
+            return True
+        return col.startswith(onchain_prefixes)
+
+    def _is_ta(col: str) -> bool:
+        # Treat classic price/technical factors as TA block.
+        return col.startswith(ta_prefixes)
+
+    if variant in ("all", "boruta_all"):
+        return base_cols
+    if variant in ("onchain", "boruta_onchain"):
+        return [c for c in base_cols if _is_onchain(c)]
+    if variant in ("ta", "boruta_ta"):
+        return [c for c in base_cols if _is_ta(c)]
+    if variant == "univariate":
+        return ["close"] if "close" in df.columns else []
+
+    raise ValueError(f"Unknown dataset_variant: {dataset_variant}")

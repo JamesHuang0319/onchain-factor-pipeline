@@ -1,17 +1,98 @@
 # configs/data.yaml
-# ──────────────────────────────────────────────────────────────
-# Global data acquisition configuration.
-# All paths are relative to the project root.
-# ──────────────────────────────────────────────────────────────
+# Unified data config for paper-style expansion study.
+# Goal: maximize data coverage quality, with on-chain as the core signal family.
 
 price:
-  symbols:           ["BTC-USD", "ETH-USD", "SOL-USD"]
-  start_date:        "2018-01-01"
-  end_date:          null          # null → today
-  cache_dir:         "data/raw/yfinance"
-  force_download:    false         # true → bypass cache
+  symbols: ["BTC-USD"]
+  start_date: "2013-03-11"
+  end_date: null
+  cache_dir: "data/raw/yfinance"
+  force_download: false
 
 onchain:
+  primary_provider: "coinmetrics"
+  providers:
+    blockchain:
+      cache_dir: "data/raw/blockchain"
+      timespan: "all"
+      force_download: false
+    coinmetrics:
+      enabled: true
+      cache_dir: "data/raw/coinmetrics"
+      asset: "btc"
+      frequency: "1d"
+      start_time: "2013-03-11"
+      end_time: null
+      force_download: false
+      # Coin Metrics Community API aliases -> metric codes
+      # Switch `primary_provider` to "coinmetrics" to use this block.
+      metrics:
+        - { name: "n-transactions", metric: "TxCnt" }
+        - { name: "n-unique-addresses", metric: "AdrActCnt" }
+        - { name: "transaction-fees", metric: "FeeTotNtv" }
+        - { name: "transfer-count", metric: "TxTfrCnt" }
+        - { name: "hash-rate", metric: "HashRate" }
+        - { name: "block-count", metric: "BlkCnt" }
+        - { name: "circulating-supply", metric: "SplyCur" }
+        - { name: "issuance", metric: "IssTotNtv" }
+        - { name: "market-cap-usd", metric: "CapMrktCurUSD" }
+    glassnode:
+      enabled: false
+      cache_dir: "data/raw/glassnode"
+      api_key_env: "GLASSNODE_API_KEY"
+      asset: "BTC"
+      interval: "24h"
+      force_download: false
+      # NOTE:
+      # - names are project-standard aliases (unified naming map)
+      # - paths are Glassnode metric paths and may require account-tier validation
+      metrics:
+        - { name: "ninety_day_coin_days_destroyed", path: "indicators/cdd_90d" }
+        - { name: "adjusted_circulating_supply", path: "supply/current_adjusted" }
+        - { name: "adjusted_sopr", path: "indicators/sopr_adjusted" }
+        - { name: "aggregate_security_spend_thermocap_usd", path: "mining/thermocap" }
+        - { name: "average_coin_dormancy", path: "indicators/average_dormancy" }
+        - { name: "average_spent_output_lifespan", path: "indicators/asol" }
+        - { name: "all_exchange_balance_btc", path: "distribution/balance_exchanges" }
+        - { name: "balanced_price_usd", path: "market/balanced_price_usd" }
+        - { name: "circulating_supply", path: "supply/current" }
+        - { name: "coin_days_destroyed", path: "indicators/cdd" }
+        - { name: "coin_years_destroyed", path: "indicators/cyd" }
+        - { name: "cumulative_value_days_destroyed", path: "indicators/cvdd" }
+        - { name: "delta_cap_usd", path: "market/delta_cap_usd" }
+        - { name: "difficulty_ribbon_compression", path: "mining/difficulty_ribbon_compression" }
+        - { name: "entity_adjusted_dormancy_flow", path: "indicators/entity_adjusted_dormancy_flow" }
+        - { name: "all_exchange_net_position_change_btc", path: "distribution/exchange_net_position_change" }
+        - { name: "inflation_rate", path: "supply/inflation_rate" }
+        - { name: "investor_capitalization", path: "market/investor_capitalization" }
+        - { name: "issuance_btc", path: "supply/issued" }
+        - { name: "liveliness", path: "indicators/liveliness" }
+        - { name: "market_cap_to_thermocap_ratio", path: "market/marketcap_thermocap_ratio" }
+        - { name: "market_cap_usd", path: "market/marketcap_usd" }
+        - { name: "mvrv_ratio", path: "market/mvrv" }
+        - { name: "median_spent_output_lifespan", path: "indicators/msol" }
+        - { name: "mvrv_z_score", path: "market/mvrv_z_score" }
+        - { name: "net_realized_profit_loss_usd", path: "indicators/net_realized_profit_loss" }
+        - { name: "all_exchanges_net_transfer_volume_btc", path: "transactions/transfers_volume_exchanges_net" }
+        - { name: "net_unrealized_profit_loss", path: "indicators/nupl" }
+        - { name: "network_value_to_transactions_ratio", path: "indicators/nvt" }
+        - { name: "nvt_signal", path: "indicators/nvts" }
+        - { name: "active_addresses", path: "addresses/active_count" }
+        - { name: "non_zero_balance_addresses", path: "addresses/non_zero_count" }
+        - { name: "addresses_with_balance_over_10k", path: "addresses/balance_10k_count" }
+        # HODL Waves group examples (expand/adjust by available API paths)
+        - { name: "hodl_waves_24h", path: "distribution/hodl_waves_24h" }
+        - { name: "hodl_waves_1d_1w", path: "distribution/hodl_waves_1d_1w" }
+        - { name: "hodl_waves_1w_1m", path: "distribution/hodl_waves_1w_1m" }
+        - { name: "hodl_waves_1m_3m", path: "distribution/hodl_waves_1m_3m" }
+        - { name: "hodl_waves_3m_6m", path: "distribution/hodl_waves_3m_6m" }
+        - { name: "hodl_waves_6m_12m", path: "distribution/hodl_waves_6m_12m" }
+        - { name: "hodl_waves_1y_2y", path: "distribution/hodl_waves_1y_2y" }
+        - { name: "hodl_waves_2y_3y", path: "distribution/hodl_waves_2y_3y" }
+        - { name: "hodl_waves_3y_5y", path: "distribution/hodl_waves_3y_5y" }
+        - { name: "hodl_waves_5y_7y", path: "distribution/hodl_waves_5y_7y" }
+        - { name: "hodl_waves_7y_10y", path: "distribution/hodl_waves_7y_10y" }
+        - { name: "hodl_waves_over_10y", path: "distribution/hodl_waves_10y_inf" }
   metrics:
     - "n-transactions"
     - "n-unique-addresses"
@@ -22,24 +103,47 @@ onchain:
     - "cost-per-transaction"
     - "hash-rate"
     - "difficulty"
-  timespan:          "all"
-  cache_dir:         "data/raw/blockchain"
-  force_download:    false
+  timespan: "all"
+  cache_dir: "data/raw/blockchain"
+  force_download: false
 
 macro:
-  release_lag_days:  1             # data available 1 day after release
-  cache_dir:         "data/raw/macro"
-  use_dummy:         true          # Iter-0/1: dummy data; Iter-2: set false
+  release_lag_days: 1
+  cache_dir: "data/raw/macro"
+  use_dummy: true
 
 prediction:
-  horizon:           7             # k=7 day forward log-return
-  target_col:        "log_ret_7d"
+  horizon: 1
+  target_col: "log_ret_h"
+  classification_target_col: "direction_h"
+  positive_class_rule: "log_ret_h>0"
 
 split:
-  train_years:       3
-  val_months:        6
-  test_months:       6
-  step_months:       3
-  min_rows_fallback: 500          # if data < this, use 70/30 chronological
+  method: "chronological"
+  train_ratio: 0.8
+  test_ratio: 0.2
+  train_years: 3
+  val_months: 6
+  test_months: 6
+  step_months: 3
+  min_rows_fallback: 500
 
-random_seed:         42
+calendar:
+  timezone: "UTC"
+  frequency: "1D"
+  master_calendar: "price"
+
+quality:
+  min_total_rows: 1500
+  max_feature_missing_ratio: 0.4
+  max_label_missing_ratio: 0.0
+  min_train_rows: 1000
+  min_test_rows: 250
+  min_positive_class_ratio: 0.35
+  max_positive_class_ratio: 0.65
+
+artifacts:
+  data_audit_dir: "reports/00_summary/data_audit"
+  dataset_snapshot_dir: "data/processed/snapshots"
+
+random_seed: 42

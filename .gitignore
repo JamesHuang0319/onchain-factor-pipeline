@@ -20,6 +20,11 @@ reports/trading/
 reports/summary.md
 reports/*
 !reports/.gitkeep
+!reports/00_summary/
+!reports/00_summary/*.csv
+!reports/00_summary/*.md
+reports/00_summary/data_audit/
+reports/00_summary/latest_predictions/
 
 # ── IDE / Editor ──────────────────────────────────
 .vscode/

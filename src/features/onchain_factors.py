@@ -35,11 +35,16 @@ def compute_onchain_factors(df: pd.DataFrame) -> pd.DataFrame:
         "n-unique-addresses": "addr",
         "transaction-fees": "fees",
         "estimated-transaction-volume": "txvol",
+        "transfer-count": "txcnt",
         "mempool-size": "mempool",
         "miners-revenue": "mrev",
         "cost-per-transaction": "cptx",
         "hash-rate": "hr",
         "difficulty": "diff",
+        "block-count": "blk",
+        "circulating-supply": "supply",
+        "issuance": "issuance",
+        "market-cap-usd": "mcap",
     }
 
     def _zscore(x: pd.Series, window: int, min_periods: int) -> pd.Series:

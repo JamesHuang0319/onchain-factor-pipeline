@@ -44,6 +44,26 @@ Secondary focus:
   - run pytest
   - report metric deltas
 
+### Environment & Run Commands
+
+> **IMPORTANT**: The project uses a dedicated conda environment named `crypto_predict`.
+> The default `python` on PATH (e.g., `E:\Python311\python.exe`) is missing project dependencies.
+
+Always run commands within the `crypto_predict` conda environment.
+
+```powershell
+# Activate the environment
+conda activate crypto_predict
+
+# Correct: run tests
+pytest tests/test_no_leakage.py -v -p no:cacheprovider
+
+# Correct: run pipeline
+python -m src.cli <command> --config <config>
+```
+
+Never use bare `python` or `pytest` in pwsh without activating the `crypto_predict` conda environment first.
+
 ### Git Workflow (Mandatory)
 
 - Never develop directly on `main`.

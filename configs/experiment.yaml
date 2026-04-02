@@ -1,0 +1,225 @@
+# configs/experiment.yaml
+# Unified master config for graduation research expansion.
+# One experiment definition, no legacy split.
+
+experiment_name: "onchain_crypto_graduation_research"
+artifact_prefix: "btc_predict"
+symbol: "BTC-USD"
+label_horizon_days: 1
+feature_set: "all"
+random_seed: 42
+
+research:
+  objective: "Compare direction vs magnitude prediction across ML/DL with on-chain-centric data."
+  paper_guided_not_exact_reproduction: true
+  prioritize_data_coverage_and_quality: true
+
+pipeline:
+  run_data_download: true
+  run_feature_build: true
+  run_feature_selection: true
+  run_training: true
+  run_backtest: true
+  run_reporting: true
+
+features:
+  price_factors: true
+  onchain_factors: true
+  macro_factors: false
+  ta_factors: true
+
+preprocessing:
+  handle_missing: "drop_rows_with_missing_after_merge"
+  standardize_after_split: true
+  preserve_temporal_order: true
+  no_shuffle: true
+  scaling:
+    method: "zscore"
+    fit_on_train_only: true
+
+tasks:
+  classification:
+    enabled: true
+    label_col: "direction_h"
+    positive_class_rule: "log_ret_h>0"
+    metrics: ["accuracy", "precision", "recall", "f1"]
+  regression:
+    enabled: true
+    label_col: "log_ret_h"
+    metrics: ["rmse", "r2", "mae", "directional_accuracy"]
+
+datasets:
+  variants:
+    - "onchain"
+    - "ta"
+    - "all"
+    - "boruta_onchain"
+    - "boruta_ta"
+    - "boruta_all"
+    - "univariate"
+  univariate_price_col: "close"
+  boruta:
+    enabled: true
+    estimator: "random_forest"
+    n_estimators: 1000
+    max_iter: 100
+    perc: 100
+    alpha: 0.05
+    random_state: 42
+  feature_selection:
+    method: "boruta_lasso"
+    lasso:
+      alpha: 0.001
+      C: 0.5
+      solver: "liblinear"
+      class_weight: "balanced"
+      max_iter: 2000
+      tol: 0.0001
+      coef_threshold: 1.0e-8
+      random_state: 42
+
+models:
+  ridge:
+    regression:
+      alpha: 1.0
+      fit_intercept: true
+      normalize_features: true
+  lasso:
+    regression:
+      alpha: 0.001
+      max_iter: 5000
+      tol: 0.0001
+      normalize_features: true
+      random_state: 42
+  svm:
+    classification:
+      C: 10.0
+      kernel: "rbf"
+      gamma: "scale"
+      class_weight: "balanced"
+      probability: true
+      normalize_features: true
+      random_state: 42
+    regression:
+      C: 10.0
+      kernel: "rbf"
+      gamma: "scale"
+      epsilon: 0.01
+      normalize_features: true
+      random_state: 42
+  rf:
+    classification:
+      n_estimators: 800
+      max_depth: 12
+      min_samples_split: 4
+      min_samples_leaf: 2
+      max_features: "sqrt"
+      class_weight: "balanced"
+      random_state: 42
+      n_jobs: -1
+    regression:
+      n_estimators: 800
+      max_depth: 12
+      min_samples_split: 4
+      min_samples_leaf: 2
+      max_features: "sqrt"
+      random_state: 42
+      n_jobs: -1
+  lgbm:
+    classification:
+      n_estimators: 800
+      learning_rate: 0.02
+      max_depth: 6
+      num_leaves: 63
+      min_child_samples: 25
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_alpha: 0.05
+      reg_lambda: 1.0
+      random_state: 42
+      n_jobs: -1
+    regression:
+      n_estimators: 900
+      learning_rate: 0.02
+      max_depth: 6
+      num_leaves: 63
+      min_child_samples: 20
+      subsample: 0.8
+      colsample_bytree: 0.7
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      random_state: 42
+      n_jobs: -1
+  xgboost:
+    classification:
+      n_estimators: 800
+      learning_rate: 0.03
+      max_depth: 6
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_alpha: 0.05
+      reg_lambda: 1.0
+      random_state: 42
+      n_jobs: -1
+    regression:
+      n_estimators: 900
+      learning_rate: 0.03
+      max_depth: 6
+      subsample: 0.8
+      colsample_bytree: 0.7
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      random_state: 42
+      n_jobs: -1
+
+comparison:
+  ml_models: ["svm", "rf", "lgbm", "xgboost", "lasso", "ridge"]
+  dl_models: ["lstm", "cnn_lstm", "cnn_gru", "tcn", "lstnet"]
+  run_matrix: "task_x_model_x_dataset"
+
+decision:
+  selected_model: "svm"
+
+deep_learning:
+  enabled: true
+  timesteps: 5
+  tensor_layout: "(samples, timesteps, features)"
+  batch_size: 64
+  max_epochs: 100
+  early_stopping_patience: 10
+  optimizer: "adam"
+  learning_rate: 0.001
+
+strategy:
+  mode: "long_short"
+  top_quantile: 0.2
+  bottom_quantile: 0.2
+  default_cost_bps: 10
+  cost_bps: [5, 10, 20]
+
+backtest:
+  initial_capital: 1000
+  fee_rate_per_trade: 0.005
+  tax_rate_on_realized_profit: 0.30
+  annualization_days: 365
+  annual_metric: "annual_ror"
+  execution_rule:
+    predict_up: "long"
+    predict_down: "short"
+
+evaluation:
+  walk_forward_type: "expanding"
+  horizons: [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180]
+  primary_selection_metric:
+    classification: "f1"
+    regression: "rmse"
+  report_table_id: "task_model_dataset_metrics"
+
+output:
+  figures_dir: "reports/figures"
+  trading_dir: "reports/trading"
+  model_dir: "models_saved"
+  summary_dir: "reports/00_summary"
+  registry_file: "reports/experiment_registry.csv"
+
+
