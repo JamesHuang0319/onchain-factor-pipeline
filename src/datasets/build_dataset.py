@@ -38,11 +38,63 @@ logger = logging.getLogger(__name__)
 
 LABEL_COL = "log_ret_h"
 DIRECTION_LABEL_COL = "direction_h"
+HALVING_DATES_UTC = (
+    pd.Timestamp("2012-11-28", tz="UTC"),
+    pd.Timestamp("2016-07-09", tz="UTC"),
+    pd.Timestamp("2020-05-11", tz="UTC"),
+    pd.Timestamp("2024-04-20", tz="UTC"),
+    pd.Timestamp("2028-04-20", tz="UTC"),  # approximate future anchor
+)
 
 
 # ──────────────────────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────────────────────
+
+
+def _compute_halving_features(index: pd.DatetimeIndex) -> pd.DataFrame:
+    """
+    Build deterministic BTC halving-cycle features from the calendar only.
+
+    Features
+    --------
+    halving_cycle_id           : integer cycle bucket between halving anchors
+    halving_days_since_prev    : days since previous halving
+    halving_days_to_next       : days until next halving
+    halving_progress           : normalized progress within current cycle [0, 1]
+    """
+    idx = pd.DatetimeIndex(index)
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    else:
+        idx = idx.tz_convert("UTC")
+
+    feats = pd.DataFrame(index=idx)
+    prev_days: list[float] = []
+    next_days: list[float] = []
+    cycle_ids: list[int] = []
+    progress_vals: list[float] = []
+
+    anchors = list(HALVING_DATES_UTC)
+    for ts in idx:
+        prev_idx = max(i for i, d in enumerate(anchors) if d <= ts)
+        next_idx = min(prev_idx + 1, len(anchors) - 1)
+        prev_halving = anchors[prev_idx]
+        next_halving = anchors[next_idx]
+        cycle_len = max(1, (next_halving - prev_halving).days)
+        since_prev = (ts - prev_halving).days
+        to_next = (next_halving - ts).days
+
+        cycle_ids.append(prev_idx)
+        prev_days.append(float(since_prev))
+        next_days.append(float(to_next))
+        progress_vals.append(float(np.clip(since_prev / cycle_len, 0.0, 1.0)))
+
+    feats["halving_cycle_id"] = np.asarray(cycle_ids, dtype=float)
+    feats["halving_days_since_prev"] = np.asarray(prev_days, dtype=float)
+    feats["halving_days_to_next"] = np.asarray(next_days, dtype=float)
+    feats["halving_progress"] = np.asarray(progress_vals, dtype=float)
+    return feats
 
 
 def build_dataset(
@@ -154,6 +206,8 @@ def build_dataset(
     # ── 5. Compute price factors ──────────────────────────────
     # NOTE: compute_price_factors only looks at [: t] data.
     data = compute_price_factors(merged)
+    halving_features = _compute_halving_features(data.index)
+    data = pd.concat([data, halving_features], axis=1)
 
     # ── 6. Compute on-chain factors ───────────────────────────
     if use_onchain and onchain_df is not None:
@@ -315,6 +369,7 @@ def get_feature_cols_by_variant(
         "macd_",
         "williams_",
         "close_open_ret",
+        "halving_",
     )
 
     def _is_onchain(col: str) -> bool:

@@ -486,6 +486,68 @@ def _prepare_model_for_history_scoring(model) -> None:
         model._history_tail = None
 
 
+def _fixed_halving_periods(end_date: pd.Timestamp | str) -> list[tuple[str, pd.Timestamp, pd.Timestamp]]:
+    end_ts = pd.Timestamp(end_date)
+    if end_ts.tzinfo is None:
+        end_ts = end_ts.tz_localize("UTC")
+    else:
+        end_ts = end_ts.tz_convert("UTC")
+    return [
+        ("full_sample", pd.Timestamp.min.tz_localize("UTC"), end_ts),
+        ("cycle_2016_2020", pd.Timestamp("2016-07-09", tz="UTC"), pd.Timestamp("2020-05-10", tz="UTC")),
+        ("cycle_2020_2024", pd.Timestamp("2020-05-11", tz="UTC"), pd.Timestamp("2024-04-19", tz="UTC")),
+        ("cycle_2024_end", pd.Timestamp("2024-04-20", tz="UTC"), end_ts),
+    ]
+
+
+def _fixed_strategy_specs() -> list[dict[str, object]]:
+    specs: list[dict[str, object]] = [{"name": "long_only_sign", "kind": "long_only_sign"}]
+    for band in (0.0025, 0.005, 0.01):
+        specs.append({"name": f"long_only_band_{band:g}", "kind": "long_only_band", "band": band})
+    specs.append({"name": "full_exposure_sign", "kind": "full_exposure_sign"})
+    for band in (0.0025, 0.005, 0.01):
+        specs.append({"name": f"sign_band_{band:g}", "kind": "sign_band", "band": band})
+    for q in (0.05, 0.10, 0.20):
+        specs.append({"name": f"quantile_long_only_{q:.2f}", "kind": "quantile_long_only", "q": q})
+    for q in (0.05, 0.10, 0.20):
+        specs.append({"name": f"quantile_ls_{q:.2f}", "kind": "quantile_ls", "q": q})
+    return specs
+
+
+def _signal_from_strategy_spec(scores: pd.Series, spec: dict[str, object]) -> pd.Series:
+    kind = str(spec["kind"])
+    signal = pd.Series(0.0, index=scores.index, dtype=float)
+    if kind == "long_only_sign":
+        signal.loc[scores >= 0.0] = 1.0
+        return signal
+    if kind == "long_only_band":
+        band = float(spec["band"])
+        signal.loc[scores >= band] = 1.0
+        return signal
+    if kind == "full_exposure_sign":
+        signal.loc[scores >= 0.0] = 1.0
+        signal.loc[scores < 0.0] = -1.0
+        return signal
+    if kind == "sign_band":
+        band = float(spec["band"])
+        signal.loc[scores >= band] = 1.0
+        signal.loc[scores <= -band] = -1.0
+        return signal
+    if kind == "quantile_long_only":
+        q = float(spec["q"])
+        threshold = float(scores.quantile(1.0 - q))
+        signal.loc[scores >= threshold] = 1.0
+        return signal
+    if kind == "quantile_ls":
+        q = float(spec["q"])
+        upper = float(scores.quantile(1.0 - q))
+        lower = float(scores.quantile(q))
+        signal.loc[scores >= upper] = 1.0
+        signal.loc[scores <= lower] = -1.0
+        return signal
+    raise ValueError(f"Unknown strategy kind: {kind}")
+
+
 def _tuning_root(exp_cfg: dict) -> Path:
     root = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/summary")) / "tuning"
     root.mkdir(parents=True, exist_ok=True)
@@ -2002,6 +2064,201 @@ def test_full_history(
         f"  metrics={metrics_out}\n"
         f"  backtest={bt_out}\n"
         f"  equity={equity_out}",
+        fg="green",
+        bold=True,
+    )
+
+
+@cli.command("halving-strategy-study")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--model", "model_name", default=None, type=str, help="Model with saved OOS predictions.")
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Prediction task. Default resolves from config.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+@click.option("--cost-bps", default=5.0, type=float, show_default=True)
+@click.option(
+    "--prediction-scope",
+    default="oos",
+    type=click.Choice(["oos", "full_history"]),
+    show_default=True,
+    help="Use existing OOS predictions or full-history predictions from test-full-history.",
+)
+def halving_strategy_study(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+    cost_bps: float,
+    prediction_scope: str,
+):
+    """Evaluate fixed halving periods and fixed strategy search space on saved predictions."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+    prefix = _artifact_prefix(exp_cfg)
+    symbol = exp_cfg.get("symbol", "BTC-USD")
+    task_name = _resolve_task(task, exp_cfg, data_cfg)
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
+
+    from src.backtest.backtester import run_backtest
+    from src.ingest.price import download_price
+    from src.etl.cleaner import clean_price
+
+    suffix = "_full_history_preds.parquet" if prediction_scope == "full_history" else "_preds.parquet"
+    pred_path = Path(f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}{suffix}")
+    if not pred_path.exists():
+        raise click.ClickException(
+            f"Prediction file not found: {pred_path}. "
+            f"Run 'train' first for OOS, or 'test-full-history' for full_history."
+        )
+
+    pred_df = pd.read_parquet(pred_path)
+    if pred_df.empty:
+        raise click.ClickException(f"Prediction file is empty: {pred_path}")
+    pred_df.index = pd.DatetimeIndex(pred_df.index)
+    if pred_df.index.tz is None:
+        pred_df.index = pred_df.index.tz_localize("UTC")
+    else:
+        pred_df.index = pred_df.index.tz_convert("UTC")
+
+    price_df = clean_price(
+        download_price(
+            symbol,
+            data_cfg["price"]["start_date"],
+            data_cfg["price"].get("end_date"),
+            data_cfg["price"]["cache_dir"],
+        )
+    )
+
+    prediction_start = pd.Timestamp(pred_df.index.min())
+    if prediction_start.tzinfo is None:
+        prediction_start = prediction_start.tz_localize("UTC")
+    else:
+        prediction_start = prediction_start.tz_convert("UTC")
+
+    scores = pred_df["y_pred"].astype(float) - 0.5 if task_name == "classification" else pred_df["y_pred"].astype(float)
+    periods = _fixed_halving_periods(price_df.index.max())
+    strategy_specs = _fixed_strategy_specs()
+
+    out_dir = Path("reports/summary/stability")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    strategy_rows: list[dict] = []
+    period_rows: list[dict] = []
+
+    for spec in strategy_specs:
+        signal = _signal_from_strategy_spec(scores, spec)
+        full_res = run_backtest(price_df, signal, cost_bps=cost_bps)
+        strategy_rows.append(
+            {
+                "prediction_scope": prediction_scope,
+                "model": resolved_model_name,
+                "task": task_name,
+                "variant": variant_name,
+                "strategy": str(spec["name"]),
+                "prediction_start": prediction_start.date().isoformat(),
+                "cost_bps": float(cost_bps),
+                "exposure_rate": float((signal != 0).mean()),
+                "long_rate": float((signal > 0).mean()),
+                "short_rate": float((signal < 0).mean()),
+                "cumulative_return": float(full_res["cumulative_return"]),
+                "annualised_return": float(full_res["annualised_return"]),
+                "sharpe_ratio": float(full_res["sharpe_ratio"]),
+                "max_drawdown": float(full_res["max_drawdown"]),
+                "turnover": float(full_res["turnover"]),
+                "n_days": int(full_res["n_days"]),
+            }
+        )
+
+        for period_name, start_ts, end_ts in periods:
+            px = price_df.loc[(price_df.index >= start_ts) & (price_df.index <= end_ts)].copy()
+            sg = signal.loc[(signal.index >= start_ts) & (signal.index <= end_ts)].copy()
+            if px.empty or sg.empty:
+                continue
+            effective_start = max(start_ts, prediction_start)
+            res = run_backtest(px, sg, cost_bps=cost_bps)
+            period_rows.append(
+                {
+                    "prediction_scope": prediction_scope,
+                    "model": resolved_model_name,
+                    "task": task_name,
+                    "variant": variant_name,
+                    "strategy": str(spec["name"]),
+                    "period": period_name,
+                    "period_start": start_ts.date().isoformat(),
+                    "period_end": end_ts.date().isoformat(),
+                    "prediction_start": prediction_start.date().isoformat(),
+                    "effective_strategy_start": effective_start.date().isoformat(),
+                    "cost_bps": float(cost_bps),
+                    "exposure_rate": float((sg != 0).mean()),
+                    "long_rate": float((sg > 0).mean()),
+                    "short_rate": float((sg < 0).mean()),
+                    "cumulative_return": float(res["cumulative_return"]),
+                    "annualised_return": float(res["annualised_return"]),
+                    "sharpe_ratio": float(res["sharpe_ratio"]),
+                    "max_drawdown": float(res["max_drawdown"]),
+                    "turnover": float(res["turnover"]),
+                    "n_days": int(res["n_days"]),
+                }
+            )
+
+    strategy_df = pd.DataFrame(strategy_rows).sort_values(
+        ["cumulative_return", "sharpe_ratio"],
+        ascending=False,
+    ).reset_index(drop=True)
+    period_df = pd.DataFrame(period_rows).sort_values(
+        ["strategy", "period_start"],
+    ).reset_index(drop=True)
+
+    stem = f"{prefix}_{resolved_model_name}_{task_name}_{variant_name}_{prediction_scope}"
+    strategy_csv = out_dir / f"{stem}_strategy_search.csv"
+    period_csv = out_dir / f"{stem}_halving_periods.csv"
+    summary_md = out_dir / f"{stem}_halving_strategy_summary.md"
+    strategy_df.to_csv(strategy_csv, index=False, encoding="utf-8")
+    period_df.to_csv(period_csv, index=False, encoding="utf-8")
+
+    best_by_return = strategy_df.iloc[0]
+    best_by_sharpe = strategy_df.sort_values(
+        ["sharpe_ratio", "cumulative_return"],
+        ascending=False,
+    ).iloc[0]
+    with open(summary_md, "w", encoding="utf-8") as f:
+        f.write("# Halving Period and Strategy Study\n\n")
+        f.write(f"- model: `{resolved_model_name}`\n")
+        f.write(f"- task: `{task_name}`\n")
+        f.write(f"- dataset_variant: `{variant_name}`\n")
+        f.write(f"- prediction_scope: `{prediction_scope}`\n")
+        f.write(f"- prediction_start: `{prediction_start.date().isoformat()}`\n")
+        f.write(f"- cost_bps: `{cost_bps}`\n\n")
+        f.write("## Best by Cumulative Return\n\n")
+        f.write(_dataframe_to_markdown(pd.DataFrame([best_by_return])))
+        f.write("\n\n## Best by Sharpe\n\n")
+        f.write(_dataframe_to_markdown(pd.DataFrame([best_by_sharpe])))
+        f.write("\n\n## Fixed Halving Periods\n\n")
+        f.write(f"- `full_sample` (strategy active from `{prediction_start.date().isoformat()}`)\n")
+        f.write("- `2016-07-09 ~ 2020-05-10`\n")
+        f.write("- `2020-05-11 ~ 2024-04-19`\n")
+        f.write("- `2024-04-20 ~ end`\n")
+
+    click.echo("\n── Halving Strategy Study ──")
+    click.echo(strategy_df.head(10).to_string(index=False, float_format=lambda x: f"{x:.6f}"))
+    click.secho(
+        f"\n✓ halving-strategy-study complete\n"
+        f"  strategy_search={strategy_csv}\n"
+        f"  halving_periods={period_csv}\n"
+        f"  summary={summary_md}",
         fg="green",
         bold=True,
     )

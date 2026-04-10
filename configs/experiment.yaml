@@ -958,13 +958,13 @@ tuning:
           n_jobs: -1
           task: classification
         boruta_onchain:
-          n_estimators: 300
-          max_depth: 6
-          min_samples_split: 4
-          min_samples_leaf: 1
-          max_features: log2
-          class_weight: null
-          random_state: 65
+          n_estimators: 800
+          max_depth: null
+          min_samples_split: 8
+          min_samples_leaf: 2
+          max_features: sqrt
+          class_weight: balanced
+          random_state: 73
           n_jobs: -1
           task: classification
         boruta_all:
@@ -1024,7 +1024,7 @@ tuning:
           min_samples_split: 2
           min_samples_leaf: 8
           max_features: sqrt
-          random_state: 52
+          random_state: 59
           n_jobs: -1
           task: regression
         boruta_all:
@@ -1116,7 +1116,7 @@ tuning:
           gamma: 0.01
           epsilon: 0.018679656620337434
           normalize_features: true
-          random_state: 60
+          random_state: 78
           task: regression
         boruta_all:
           C: 1.381588390256013
@@ -1162,14 +1162,14 @@ tuning:
           n_jobs: -1
           task: classification
         boruta_onchain:
-          n_estimators: 500
-          learning_rate: 0.07775058690275993
-          max_depth: 3
-          subsample: 0.6916192287856417
-          colsample_bytree: 0.6128400975616151
-          reg_alpha: 0.008838104742344489
-          reg_lambda: 0.3431482211997992
-          random_state: 52
+          n_estimators: 300
+          learning_rate: 0.010778038801831716
+          max_depth: 5
+          subsample: 0.6979567415213905
+          colsample_bytree: 0.6558151714100575
+          reg_alpha: 0.0020299508770612964
+          reg_lambda: 3.029252600136894
+          random_state: 53
           n_jobs: -1
           task: classification
         boruta_ta:
@@ -1247,7 +1247,7 @@ tuning:
           colsample_bytree: 0.9940886082643031
           reg_alpha: 0.3680892745189665
           reg_lambda: 5.407136503563504
-          random_state: 49
+          random_state: 56
           n_jobs: -1
           task: regression
         boruta_ta:
@@ -1551,18 +1551,18 @@ tuning:
           task: classification
       regression:
         boruta_onchain:
-          timesteps: 15
-          conv_channels: 64
+          timesteps: 5
+          conv_channels: 16
           kernel_size: 2
           hidden_dim: 32
           num_layers: 1
-          dropout: 0.26450532742708405
-          batch_size: 64
-          max_epochs: 30
+          dropout: 0.2864078451689614
+          batch_size: 128
+          max_epochs: 80
           early_stopping_patience: 8
-          learning_rate: 0.002965717358011797
-          weight_decay: 3.315163102984496e-05
-          random_state: 47
+          learning_rate: 0.0005796858444502885
+          weight_decay: 1.2964710781754819e-05
+          random_state: 49
           task: regression
         onchain:
           timesteps: 5
@@ -1701,8 +1701,8 @@ tuning:
           updated_at_utc: '2026-04-02T12:25:59.494301+00:00'
         boruta_onchain:
           objective: f1
-          objective_value: 0.527363184079602
-          updated_at_utc: '2026-04-02T12:31:34.537103+00:00'
+          objective_value: 0.53
+          updated_at_utc: '2026-04-10T09:34:16.297781+00:00'
         boruta_all:
           objective: f1
           objective_value: 0.5675675675675677
@@ -1726,8 +1726,8 @@ tuning:
       regression:
         boruta_onchain:
           objective: rmse
-          objective_value: 0.027057519268704883
-          updated_at_utc: '2026-04-02T12:48:02.608082+00:00'
+          objective_value: 0.02703992402906015
+          updated_at_utc: '2026-04-10T09:39:19.599681+00:00'
         boruta_all:
           objective: rmse
           objective_value: 0.026927042856408283
@@ -1770,7 +1770,7 @@ tuning:
         boruta_onchain:
           objective: rmse
           objective_value: 0.026471032543841613
-          updated_at_utc: '2026-04-02T12:14:44.987267+00:00'
+          updated_at_utc: '2026-04-10T09:37:43.739406+00:00'
         boruta_all:
           objective: rmse
           objective_value: 0.026973119799207593
@@ -1791,8 +1791,8 @@ tuning:
           updated_at_utc: '2026-04-02T13:00:50.864048+00:00'
         boruta_onchain:
           objective: f1
-          objective_value: 0.5346534653465347
-          updated_at_utc: '2026-04-02T13:02:24.305804+00:00'
+          objective_value: 0.5482233502538071
+          updated_at_utc: '2026-04-10T09:35:48.717813+00:00'
         boruta_ta:
           objective: f1
           objective_value: 0.4942528735632184
@@ -1820,8 +1820,8 @@ tuning:
           updated_at_utc: '2026-04-02T13:09:21.393110+00:00'
         boruta_onchain:
           objective: rmse
-          objective_value: 0.02705667637661485
-          updated_at_utc: '2026-04-02T13:10:51.245796+00:00'
+          objective_value: 0.027008387504709245
+          updated_at_utc: '2026-04-10T09:41:14.583368+00:00'
         boruta_ta:
           objective: rmse
           objective_value: 0.027124452954059373
@@ -1925,8 +1925,8 @@ tuning:
       regression:
         boruta_onchain:
           objective: rmse
-          objective_value: 0.026699743584172098
-          updated_at_utc: '2026-04-09T18:03:27.864121+00:00'
+          objective_value: 0.02678480438596872
+          updated_at_utc: '2026-04-10T09:25:09.619426+00:00'
         onchain:
           objective: rmse
           objective_value: 0.026851632845908947
