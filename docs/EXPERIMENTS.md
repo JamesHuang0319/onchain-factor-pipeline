@@ -38,10 +38,10 @@ Model decision policy:
 
 ## 4. Output Location Standard
 - All generated artifacts must go to `reports/`:
-  - `reports/00_summary`
-  - `reports/01_model_level`
-  - `reports/02_feature_level`
-  - `reports/03_stability`
+  - `reports/summary`
+  - `reports/summary/model_level`
+  - `reports/summary/feature_level`
+  - `reports/summary/stability`
   - `reports/figures`
   - `reports/trading`
 

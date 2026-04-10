@@ -472,8 +472,22 @@ def _fit_final_model(
     return model, train_df, val_df
 
 
+def _prepare_model_for_history_scoring(model) -> None:
+    """
+    Reset sequence-history cache when a final DL model is reused to score
+    the full timeline from the beginning.
+
+    Saved DL artifacts keep the tail of the train/validation window so they
+    can score the next unseen sample. That cache is wrong for full-history
+    in-sample scoring because it would prepend the END of the train window
+    to the START of the full dataset.
+    """
+    if hasattr(model, "_history_tail"):
+        model._history_tail = None
+
+
 def _tuning_root(exp_cfg: dict) -> Path:
-    root = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/00_summary")) / "tuning"
+    root = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/summary")) / "tuning"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -611,6 +625,98 @@ def _builtin_tuning_space(model_name: str, task_name: str) -> dict[str, object]:
             "colsample_bytree": {"distribution": "uniform", "low": 0.6, "high": 1.0},
             "reg_alpha": {"distribution": "loguniform", "low": 0.001, "high": 1.0},
             "reg_lambda": {"distribution": "loguniform", "low": 0.1, "high": 10.0},
+        },
+        ("lstm", "classification"): {
+            "timesteps": [5, 10, 15, 20],
+            "hidden_dim": [32, 64, 96, 128],
+            "num_layers": [1, 2, 3],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("lstm", "regression"): {
+            "timesteps": [5, 10, 15, 20],
+            "hidden_dim": [32, 64, 96, 128],
+            "num_layers": [1, 2, 3],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("cnn_lstm", "classification"): {
+            "timesteps": [5, 10, 15, 20],
+            "conv_channels": [16, 32, 64],
+            "kernel_size": [2, 3, 5],
+            "hidden_dim": [32, 64, 96, 128],
+            "num_layers": [1, 2],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("cnn_lstm", "regression"): {
+            "timesteps": [5, 10, 15, 20],
+            "conv_channels": [16, 32, 64],
+            "kernel_size": [2, 3, 5],
+            "hidden_dim": [32, 64, 96, 128],
+            "num_layers": [1, 2],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("gru", "classification"): {
+            "timesteps": [5, 10, 15, 20],
+            "hidden_dim": [32, 64, 96, 128],
+            "num_layers": [1, 2, 3],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("gru", "regression"): {
+            "timesteps": [5, 10, 15, 20],
+            "hidden_dim": [32, 64, 96, 128],
+            "num_layers": [1, 2, 3],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("tcn", "classification"): {
+            "timesteps": [8, 12, 16, 20],
+            "channels": [[16, 16, 16], [32, 32, 32], [32, 64, 64], [64, 64, 64]],
+            "kernel_size": [2, 3, 5],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
+        },
+        ("tcn", "regression"): {
+            "timesteps": [8, 12, 16, 20],
+            "channels": [[16, 16, 16], [32, 32, 32], [32, 64, 64], [64, 64, 64]],
+            "kernel_size": [2, 3, 5],
+            "dropout": {"distribution": "uniform", "low": 0.0, "high": 0.4},
+            "batch_size": [32, 64, 128],
+            "max_epochs": [30, 40, 60, 80],
+            "early_stopping_patience": [5, 8, 10, 12],
+            "learning_rate": {"distribution": "loguniform", "low": 1e-4, "high": 5e-3},
+            "weight_decay": {"distribution": "loguniform", "low": 1e-6, "high": 1e-2},
         },
     }
     return copy.deepcopy(spaces.get((model_key, task_key), {}))
@@ -1022,7 +1128,7 @@ def data_audit(config: str, data_config: str, dataset_variant: str):
         feature_cols=feature_cols,
         train_ratio=float(split_cfg.get("train_ratio", 0.8)),
     )
-    out_root = data_cfg.get("artifacts", {}).get("data_audit_dir", "reports/00_summary/data_audit")
+    out_root = data_cfg.get("artifacts", {}).get("data_audit_dir", "reports/summary/data_audit")
     out_dir = Path(out_root) / prefix / dataset_variant
     paths = save_data_audit(result, out_dir)
 
@@ -1631,7 +1737,7 @@ def predict_latest(
         ] or ["regression"]
 
     split_cfg = data_cfg.get("split", {})
-    out_dir = Path("reports/00_summary/latest_predictions")
+    out_dir = Path("reports/summary/latest_predictions")
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
 
@@ -1721,6 +1827,186 @@ def predict_latest(
     click.echo(f"\nSaved JSON: {out_path}")
 
 
+# ── test-full-history ────────────────────────────────────────
+
+@cli.command("test-full-history")
+@click.option("--config", default="configs/experiment.yaml")
+@click.option("--data-config", default="configs/data.yaml")
+@click.option("--model", "model_name", default=None, type=str, help="Saved final model to use.")
+@click.option(
+    "--task",
+    default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Prediction task. Default resolves from config.",
+)
+@click.option(
+    "--dataset-variant",
+    default=None,
+    type=click.Choice(
+        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
+    ),
+    help="Dataset variant. Default resolves from config.",
+)
+@click.option(
+    "--cost-bps",
+    default=None,
+    type=float,
+    help="Optional single transaction cost to print first. Full sensitivity table is always saved.",
+)
+def test_full_history(
+    config: str,
+    data_config: str,
+    model_name: Optional[str],
+    task: Optional[str],
+    dataset_variant: Optional[str],
+    cost_bps: Optional[float],
+):
+    """Score the full labeled history with the saved final model and backtest it."""
+    exp_cfg = _load_exp_cfg(config)
+    data_cfg = _load_data_cfg(data_config)
+
+    prefix = _artifact_prefix(exp_cfg)
+    symbol = exp_cfg.get("symbol", "BTC-USD")
+    task_name = _resolve_task(task, exp_cfg, data_cfg)
+    resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
+    variant_name = _resolve_dataset_variant(dataset_variant, exp_cfg)
+
+    from src.evaluation.metrics import compute_classification_metrics, compute_metrics, rank_ic
+    from src.backtest.strategy import make_signal
+    from src.backtest.backtester import run_backtest, sensitivity_analysis
+    from src.ingest.price import download_price
+    from src.etl.cleaner import clean_price
+
+    ModelCls, _ = _resolve_model(
+        resolved_model_name,
+        exp_cfg.get("models", {}),
+        task=task_name,
+        exp_cfg=exp_cfg,
+        variant_name=variant_name,
+    )
+    model_path, meta_path = _model_artifact_paths(
+        exp_cfg=exp_cfg,
+        model_name=resolved_model_name,
+        task_name=task_name,
+        variant_name=variant_name,
+    )
+    if not model_path.exists():
+        raise click.ClickException(
+            f"Saved final model not found: {model_path}. Run 'train' first."
+        )
+
+    df = _load_or_build_feature_dataset(exp_cfg, data_cfg, keep_unlabeled_tail=False)
+    label_col, feature_cols = _resolve_feature_cols_for_variant(
+        df=df,
+        task_name=task_name,
+        variant_name=variant_name,
+        exp_cfg=exp_cfg,
+        data_cfg=data_cfg,
+    )
+
+    if meta_path.exists():
+        meta = _read_json_file(meta_path)
+        feature_cols = list(meta.get("feature_cols", feature_cols))
+        label_col = str(meta.get("label_col", label_col))
+
+    hist_df = df.dropna(subset=feature_cols + [label_col]).copy()
+    if hist_df.empty:
+        raise click.ClickException(
+            f"No labeled, feature-complete rows available for full-history test ({resolved_model_name}, {task_name}, {variant_name})."
+        )
+
+    model = ModelCls.load(model_path)
+    _prepare_model_for_history_scoring(model)
+    y_pred = model.predict(hist_df[feature_cols])
+    pred_df = pd.DataFrame(
+        {
+            "y_true": hist_df[label_col].astype(float).values,
+            "y_pred": np.asarray(y_pred, dtype=float),
+        },
+        index=hist_df.index,
+    )
+    pred_df.index.name = "date"
+
+    metric_prefix = f"{resolved_model_name}_{task_name}_full_history"
+    if task_name == "classification":
+        all_metrics = compute_classification_metrics(
+            pred_df["y_true"].values,
+            pred_df["y_pred"].values,
+            prefix=metric_prefix,
+            threshold=0.5,
+        )
+    else:
+        all_metrics = compute_metrics(
+            pred_df["y_true"].values,
+            pred_df["y_pred"].values,
+            prefix=metric_prefix,
+        )
+        all_metrics[f"{resolved_model_name}_{task_name}_full_history_rank_ic"] = rank_ic(
+            pred_df["y_true"].values,
+            pred_df["y_pred"].values,
+        )
+
+    pred_out = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_full_history_preds.parquet"
+    )
+    metrics_out = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_full_history_metrics.json"
+    )
+    pred_df.to_parquet(pred_out)
+    with open(metrics_out, "w", encoding="utf-8") as f:
+        json.dump(all_metrics, f, indent=2)
+
+    price_df = clean_price(
+        download_price(
+            symbol,
+            data_cfg["price"]["start_date"],
+            data_cfg["price"].get("end_date"),
+            data_cfg["price"]["cache_dir"],
+        )
+    )
+
+    strat_cfg = exp_cfg.get("strategy", {})
+    signal_scores = pred_df["y_pred"].astype(float) - 0.5 if task_name == "classification" else pred_df["y_pred"].astype(float)
+    signal = make_signal(
+        signal_scores,
+        mode=strat_cfg.get("mode", "long_only"),
+        top_quantile=float(strat_cfg.get("top_quantile", 0.2)),
+        bottom_quantile=float(strat_cfg.get("bottom_quantile", 0.2)),
+    )
+    costs = [float(v) for v in strat_cfg.get("cost_bps", [5.0, 10.0, 20.0])]
+    bt_table = sensitivity_analysis(price_df, signal, cost_bps_list=costs)
+    bt_out = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_full_history_backtest_sensitivity.csv"
+    )
+    bt_table.reset_index().to_csv(bt_out, index=False, encoding="utf-8")
+
+    preferred_cost = float(cost_bps) if cost_bps is not None else float(strat_cfg.get("default_cost_bps", costs[0]))
+    bt_single = run_backtest(price_df, signal, cost_bps=preferred_cost)
+    equity_out = (
+        f"data/features/{prefix}_{resolved_model_name}_{task_name}_{variant_name}_full_history_equity.parquet"
+    )
+    pd.DataFrame({"equity": bt_single["equity"]}).to_parquet(equity_out)
+
+    click.echo("\n── Full-History Predictive Metrics (in-sample / full-history) ──")
+    for k, v in all_metrics.items():
+        click.echo(f"  {k}: {v:.4f}")
+
+    click.echo("\n── Full-History Backtest Sensitivity ──")
+    click.echo(bt_table.to_string(float_format=lambda x: f"{x:.6f}"))
+    click.echo(
+        "\nNOTE: this command reuses the final saved model on the full labeled history. "
+        "It is not out-of-sample and should be treated as an upper-bound / overfitting check."
+    )
+    click.secho(
+        f"\n✓ full-history test complete → {pred_out}\n"
+        f"  metrics={metrics_out}\n"
+        f"  backtest={bt_out}\n"
+        f"  equity={equity_out}",
+        fg="green",
+        bold=True,
+    )
+
+
 # ── horizon-sweep ────────────────────────────────────────────
 
 @cli.command("horizon-sweep")
@@ -1790,9 +2076,9 @@ def horizon_sweep(config: str, data_config: str, model_name: str):
 
     summary = pd.DataFrame(rows).sort_values("horizon").reset_index(drop=True)
 
-    out_csv = Path("reports/01_model_level/horizon_sweep_summary.csv")
-    out_fig_dir = Path("reports/01_model_level/figures")
-    out_md = Path("reports/00_summary/horizon_sweep_summary.md")
+    out_csv = Path("reports/summary/model_level/horizon_sweep_summary.csv")
+    out_fig_dir = Path("reports/summary/model_level/figures")
+    out_md = Path("reports/summary/horizon_sweep_summary.md")
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     out_fig_dir.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
@@ -1916,9 +2202,9 @@ def feature_horizon_matrix(config: str, data_config: str, topk: int):
             )
 
     matrix_df = pd.DataFrame(rows).sort_values(["feature", "horizon"]).reset_index(drop=True)
-    out_csv = Path("reports/02_feature_level/feature_horizon_ic_matrix.csv")
-    out_fig_dir = Path("reports/02_feature_level/figures")
-    out_md = Path("reports/00_summary/feature_horizon_matrix_summary.md")
+    out_csv = Path("reports/summary/feature_level/feature_horizon_ic_matrix.csv")
+    out_fig_dir = Path("reports/summary/feature_level/figures")
+    out_md = Path("reports/summary/feature_horizon_matrix_summary.md")
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     out_fig_dir.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
@@ -2050,9 +2336,9 @@ def stability_regime(
     regime_df = pd.DataFrame(regime_rows)
 
     # Outputs
-    out_base = Path("reports/03_stability")
+    out_base = Path("reports/summary/stability")
     out_fig = out_base / "figures"
-    out_sum = Path("reports/00_summary/rolling_regime_summary.md")
+    out_sum = Path("reports/summary/rolling_regime_summary.md")
     out_base.mkdir(parents=True, exist_ok=True)
     out_fig.mkdir(parents=True, exist_ok=True)
     out_sum.parent.mkdir(parents=True, exist_ok=True)
@@ -2364,7 +2650,7 @@ def experiment_summary(config: str, data_config: str, cost_bps: float):
     data_cfg = _load_data_cfg(data_config)
     prefix = _artifact_prefix(exp_cfg)
 
-    out_dir = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/00_summary"))
+    out_dir = Path(exp_cfg.get("output", {}).get("summary_dir", "reports/summary"))
     out_dir.mkdir(parents=True, exist_ok=True)
     feature_path = Path(f"data/features/{prefix}.parquet")
     feature_df = pd.read_parquet(feature_path) if feature_path.exists() else None

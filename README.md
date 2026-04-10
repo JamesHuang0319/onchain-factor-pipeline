@@ -61,10 +61,10 @@
 
 汇总文件：
 
-- [btc_predict_experiment_summary.csv](E:\Python_workplace\crypto_predict\reports\00_summary\btc_predict_experiment_summary.csv)
-- [btc_predict_experiment_summary.md](E:\Python_workplace\crypto_predict\reports\00_summary\btc_predict_experiment_summary.md)
-- [btc_predict_selection_summary.csv](E:\Python_workplace\crypto_predict\reports\00_summary\btc_predict_selection_summary.csv)
-- [btc_predict_selection_summary.md](E:\Python_workplace\crypto_predict\reports\00_summary\btc_predict_selection_summary.md)
+- [btc_predict_experiment_summary.csv](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_experiment_summary.csv)
+- [btc_predict_experiment_summary.md](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_experiment_summary.md)
+- [btc_predict_selection_summary.csv](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_selection_summary.csv)
+- [btc_predict_selection_summary.md](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_selection_summary.md)
 
 当前按既定规则得到的阶段性结论：
 
@@ -145,8 +145,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_ml_tuning_full.ps1 -Model
   - 特征集、预测结果、指标 JSON、回测产物
 - `models_saved/`
   - 最终模型与元信息
-- `reports/00_summary/`
-  - 汇总表、阶段报告、最新预测、选择结果
+- `reports/summary/`
+  - 汇总表、阶段报告、最新预测、选择结果，以及按主题分组的子目录
 - `reports/figures/`
   - Equity、Drawdown、Pred vs Actual 图
 - `reports/trading/`

@@ -33,7 +33,7 @@ Build a robust data baseline before model comparison:
 python -m src.cli data-audit --config configs/experiment.yaml --dataset-variant all
 ```
 2. Check outputs under:
-- `reports/00_summary/data_audit/<experiment>/<dataset_variant>/summary.csv`
+- `reports/summary/data_audit/<experiment>/<dataset_variant>/summary.csv`
 - `missing_top20.csv`
 - `split_info.csv`
 - `class_balance.csv`

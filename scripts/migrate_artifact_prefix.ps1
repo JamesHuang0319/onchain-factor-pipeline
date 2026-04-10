@@ -37,8 +37,8 @@ function Rename-WithPrefix {
 }
 
 function Merge-DataAuditDirectory {
-    $oldDir = Join-Path "reports/00_summary/data_audit" $OldPrefix
-    $newDir = Join-Path "reports/00_summary/data_audit" $NewPrefix
+    $oldDir = Join-Path "reports/summary/data_audit" $OldPrefix
+    $newDir = Join-Path "reports/summary/data_audit" $NewPrefix
 
     if (-not (Test-Path $oldDir)) {
         return $false

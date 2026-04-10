@@ -582,6 +582,368 @@ tuning:
           distribution: loguniform
           low: 0.1
           high: 10.0
+    lstm:
+      classification:
+        timesteps:
+        - 5
+        - 10
+        - 15
+        - 20
+        hidden_dim:
+        - 32
+        - 64
+        - 96
+        - 128
+        num_layers:
+        - 1
+        - 2
+        - 3
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+      regression:
+        timesteps:
+        - 5
+        - 10
+        - 15
+        - 20
+        hidden_dim:
+        - 32
+        - 64
+        - 96
+        - 128
+        num_layers:
+        - 1
+        - 2
+        - 3
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+    cnn_lstm:
+      classification:
+        timesteps:
+        - 5
+        - 10
+        - 15
+        - 20
+        conv_channels:
+        - 16
+        - 32
+        - 64
+        kernel_size:
+        - 2
+        - 3
+        - 5
+        hidden_dim:
+        - 32
+        - 64
+        - 96
+        - 128
+        num_layers:
+        - 1
+        - 2
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+      regression:
+        timesteps:
+        - 5
+        - 10
+        - 15
+        - 20
+        conv_channels:
+        - 16
+        - 32
+        - 64
+        kernel_size:
+        - 2
+        - 3
+        - 5
+        hidden_dim:
+        - 32
+        - 64
+        - 96
+        - 128
+        num_layers:
+        - 1
+        - 2
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+    gru:
+      classification:
+        timesteps:
+        - 5
+        - 10
+        - 15
+        - 20
+        hidden_dim:
+        - 32
+        - 64
+        - 96
+        - 128
+        num_layers:
+        - 1
+        - 2
+        - 3
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+      regression:
+        timesteps:
+        - 5
+        - 10
+        - 15
+        - 20
+        hidden_dim:
+        - 32
+        - 64
+        - 96
+        - 128
+        num_layers:
+        - 1
+        - 2
+        - 3
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+    tcn:
+      classification:
+        timesteps:
+        - 8
+        - 12
+        - 16
+        - 20
+        channels:
+        - - 16
+          - 16
+          - 16
+        - - 32
+          - 32
+          - 32
+        - - 32
+          - 64
+          - 64
+        - - 64
+          - 64
+          - 64
+        kernel_size:
+        - 2
+        - 3
+        - 5
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
+      regression:
+        timesteps:
+        - 8
+        - 12
+        - 16
+        - 20
+        channels:
+        - - 16
+          - 16
+          - 16
+        - - 32
+          - 32
+          - 32
+        - - 32
+          - 64
+          - 64
+        - - 64
+          - 64
+          - 64
+        kernel_size:
+        - 2
+        - 3
+        - 5
+        dropout:
+          distribution: uniform
+          low: 0.0
+          high: 0.4
+        batch_size:
+        - 32
+        - 64
+        - 128
+        max_epochs:
+        - 30
+        - 40
+        - 60
+        - 80
+        early_stopping_patience:
+        - 5
+        - 8
+        - 10
+        - 12
+        learning_rate:
+          distribution: loguniform
+          low: 0.0001
+          high: 0.005
+        weight_decay:
+          distribution: loguniform
+          low: 1.0e-06
+          high: 0.01
   best_params:
     rf:
       classification:
@@ -1106,6 +1468,230 @@ tuning:
           random_state: 56
           n_jobs: -1
           task: regression
+    lstm:
+      classification:
+        boruta_onchain:
+          timesteps: 20
+          hidden_dim: 64
+          num_layers: 2
+          dropout: 0.2357062735503635
+          batch_size: 32
+          max_epochs: 40
+          early_stopping_patience: 12
+          learning_rate: 0.00037850831245762656
+          weight_decay: 4.187144986153248e-06
+          random_state: 50
+          task: classification
+        onchain:
+          timesteps: 5
+          hidden_dim: 32
+          num_layers: 3
+          dropout: 0.1100117273476477
+          batch_size: 32
+          max_epochs: 40
+          early_stopping_patience: 5
+          learning_rate: 0.0014115365595294617
+          weight_decay: 0.00370440337170227
+          random_state: 43
+          task: classification
+      regression:
+        boruta_onchain:
+          timesteps: 5
+          hidden_dim: 128
+          num_layers: 1
+          dropout: 0.22081625250929082
+          batch_size: 128
+          max_epochs: 60
+          early_stopping_patience: 8
+          learning_rate: 0.0015741510943472756
+          weight_decay: 1.5250972382365362e-06
+          random_state: 47
+          task: regression
+        onchain:
+          timesteps: 20
+          hidden_dim: 64
+          num_layers: 2
+          dropout: 0.2357062735503635
+          batch_size: 32
+          max_epochs: 40
+          early_stopping_patience: 12
+          learning_rate: 0.00037850831245762656
+          weight_decay: 4.187144986153248e-06
+          random_state: 45
+          task: regression
+    cnn_lstm:
+      classification:
+        boruta_onchain:
+          timesteps: 10
+          conv_channels: 16
+          kernel_size: 3
+          hidden_dim: 128
+          num_layers: 2
+          dropout: 0.3958093402546381
+          batch_size: 128
+          max_epochs: 40
+          early_stopping_patience: 10
+          learning_rate: 0.002703834657556502
+          weight_decay: 0.001270573070085973
+          random_state: 49
+          task: classification
+        onchain:
+          timesteps: 15
+          conv_channels: 64
+          kernel_size: 2
+          hidden_dim: 32
+          num_layers: 1
+          dropout: 0.26450532742708405
+          batch_size: 64
+          max_epochs: 30
+          early_stopping_patience: 8
+          learning_rate: 0.002965717358011797
+          weight_decay: 3.315163102984496e-05
+          random_state: 47
+          task: classification
+      regression:
+        boruta_onchain:
+          timesteps: 15
+          conv_channels: 64
+          kernel_size: 2
+          hidden_dim: 32
+          num_layers: 1
+          dropout: 0.26450532742708405
+          batch_size: 64
+          max_epochs: 30
+          early_stopping_patience: 8
+          learning_rate: 0.002965717358011797
+          weight_decay: 3.315163102984496e-05
+          random_state: 47
+          task: regression
+        onchain:
+          timesteps: 5
+          conv_channels: 16
+          kernel_size: 5
+          hidden_dim: 96
+          num_layers: 1
+          dropout: 0.0892842952595291
+          batch_size: 128
+          max_epochs: 30
+          early_stopping_patience: 5
+          learning_rate: 0.0010074629099742019
+          weight_decay: 1.3400799762636423e-06
+          random_state: 43
+          task: regression
+    gru:
+      classification:
+        boruta_onchain:
+          timesteps: 10
+          hidden_dim: 96
+          num_layers: 1
+          dropout: 0.34212708840605877
+          batch_size: 32
+          max_epochs: 80
+          early_stopping_patience: 10
+          learning_rate: 0.0005892919430910708
+          weight_decay: 0.0021699099265605946
+          random_state: 48
+          task: classification
+        onchain:
+          timesteps: 5
+          hidden_dim: 32
+          num_layers: 3
+          dropout: 0.1100117273476477
+          batch_size: 32
+          max_epochs: 40
+          early_stopping_patience: 5
+          learning_rate: 0.0014115365595294617
+          weight_decay: 0.00370440337170227
+          random_state: 43
+          task: classification
+      regression:
+        boruta_onchain:
+          timesteps: 10
+          hidden_dim: 96
+          num_layers: 2
+          dropout: 0.08380281230859508
+          batch_size: 64
+          max_epochs: 30
+          early_stopping_patience: 8
+          learning_rate: 0.0008081419089954855
+          weight_decay: 9.533309674158781e-06
+          random_state: 49
+          task: regression
+        onchain:
+          timesteps: 20
+          hidden_dim: 128
+          num_layers: 2
+          dropout: 0.3958093402546381
+          batch_size: 128
+          max_epochs: 40
+          early_stopping_patience: 10
+          learning_rate: 0.002703834657556502
+          weight_decay: 0.001270573070085973
+          random_state: 50
+          task: regression
+    tcn:
+      classification:
+        boruta_onchain:
+          timesteps: 8
+          channels:
+          - 16
+          - 16
+          - 16
+          kernel_size: 5
+          dropout: 0.1100117273476477
+          batch_size: 32
+          max_epochs: 40
+          early_stopping_patience: 5
+          learning_rate: 0.0014115365595294617
+          weight_decay: 0.00370440337170227
+          random_state: 43
+          task: classification
+        onchain:
+          timesteps: 20
+          channels:
+          - 32
+          - 32
+          - 32
+          kernel_size: 3
+          dropout: 0.2357062735503635
+          batch_size: 32
+          max_epochs: 40
+          early_stopping_patience: 12
+          learning_rate: 0.00037850831245762656
+          weight_decay: 4.187144986153248e-06
+          random_state: 45
+          task: classification
+      regression:
+        boruta_onchain:
+          timesteps: 16
+          channels:
+          - 16
+          - 16
+          - 16
+          kernel_size: 2
+          dropout: 0.15197092025493497
+          batch_size: 64
+          max_epochs: 60
+          early_stopping_patience: 10
+          learning_rate: 0.0023511845862046413
+          weight_decay: 0.0008297115711018963
+          random_state: 46
+          task: regression
+        onchain:
+          timesteps: 16
+          channels:
+          - 16
+          - 16
+          - 16
+          kernel_size: 2
+          dropout: 0.15197092025493497
+          batch_size: 64
+          max_epochs: 60
+          early_stopping_patience: 10
+          learning_rate: 0.0023511845862046413
+          weight_decay: 0.0008297115711018963
+          random_state: 46
+          task: regression
   best_results:
     rf:
       classification:
@@ -1307,9 +1893,85 @@ tuning:
           objective: rmse
           objective_value: 0.0267357082084395
           updated_at_utc: '2026-04-02T13:23:37.481123+00:00'
+    lstm:
+      classification:
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.6307692307692307
+          updated_at_utc: '2026-04-09T17:35:25.396384+00:00'
+        onchain:
+          objective: f1
+          objective_value: 0.6259541984732825
+          updated_at_utc: '2026-04-09T17:41:28.644593+00:00'
+      regression:
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.026632203743840895
+          updated_at_utc: '2026-04-09T17:45:13.656984+00:00'
+        onchain:
+          objective: rmse
+          objective_value: 0.02676644699950435
+          updated_at_utc: '2026-04-09T17:48:30.471833+00:00'
+    cnn_lstm:
+      classification:
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.6259541984732825
+          updated_at_utc: '2026-04-09T17:55:43.116410+00:00'
+        onchain:
+          objective: f1
+          objective_value: 0.5268817204301075
+          updated_at_utc: '2026-04-09T18:00:10.453858+00:00'
+      regression:
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.026699743584172098
+          updated_at_utc: '2026-04-09T18:03:27.864121+00:00'
+        onchain:
+          objective: rmse
+          objective_value: 0.026851632845908947
+          updated_at_utc: '2026-04-09T18:07:07.588235+00:00'
+    gru:
+      classification:
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.5938864628820961
+          updated_at_utc: '2026-04-09T18:09:31.963133+00:00'
+        onchain:
+          objective: f1
+          objective_value: 0.6259541984732825
+          updated_at_utc: '2026-04-09T18:15:31.904365+00:00'
+      regression:
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.02678960241250525
+          updated_at_utc: '2026-04-09T18:21:38.614916+00:00'
+        onchain:
+          objective: rmse
+          objective_value: 0.026952793544244017
+          updated_at_utc: '2026-04-09T18:29:52.606197+00:00'
+    tcn:
+      classification:
+        boruta_onchain:
+          objective: f1
+          objective_value: 0.5700934579439252
+          updated_at_utc: '2026-04-09T18:45:51.010170+00:00'
+        onchain:
+          objective: f1
+          objective_value: 0.5870646766169154
+          updated_at_utc: '2026-04-09T18:51:15.346210+00:00'
+      regression:
+        boruta_onchain:
+          objective: rmse
+          objective_value: 0.026556922202540592
+          updated_at_utc: '2026-04-09T19:03:02.531118+00:00'
+        onchain:
+          objective: rmse
+          objective_value: 0.026775527417586053
+          updated_at_utc: '2026-04-09T19:18:12.995341+00:00'
 output:
   figures_dir: reports/figures
   trading_dir: reports/trading
   model_dir: models_saved
-  summary_dir: reports/00_summary
+  summary_dir: reports/summary
   registry_file: reports/experiment_registry.csv

@@ -35,7 +35,7 @@
    - direction prediction
    - magnitude prediction
    - feature date / prediction date
-4. Save latest prediction artifacts under `reports/00_summary/latest_predictions/`.
+4. Save latest prediction artifacts under `reports/summary/latest_predictions/`.
 
 ## Phase 4: Optional model expansion
 1. Finish ML comparison first.
