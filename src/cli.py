@@ -1,21 +1,55 @@
 """
 src/cli.py
-──────────────────────────────────────────────────────────────
-Command-line interface (Click) for the crypto-predict pipeline.
+Main CLI entrypoint for the BTC on-chain prediction pipeline.
 
-Commands:
-  download-data   – fetch price + on-chain data (cached)
-  build-features  – build feature dataset, save to data/features/
-  train           – run walk-forward training, save models + predictions
-  backtest        – run backtest on saved predictions, print perf table
-  report          – generate all figures + summary report
-  validate        – run leakage guard checks (fail fast on any violation)
+Command groups:
+  Data:
+    download-data, build-features, data-audit, predict-latest
+  Safety / validation:
+    validate, test-full-history
+  Training / selection:
+    show-search-space, tune, train, horizon-sweep, feature-horizon-matrix
+  Backtest / reporting:
+    backtest, report, halving-strategy-study
+  Experiment aggregation:
+    experiment-summary, latest-prediction-report
 
-Example (3-command demo):
-  python -m src.cli download-data --config configs/experiment.yaml
-  python -m src.cli train          --config configs/experiment.yaml
-  python -m src.cli report         --config configs/experiment.yaml
+Typical workflow:
+  1. python -m src.cli download-data --config configs/experiment.yaml
+  2. python -m src.cli build-features --config configs/experiment.yaml
+  3. python -m src.cli tune --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+  4. python -m src.cli train --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+  5. python -m src.cli backtest --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+  6. python -m src.cli report --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+
+Key output locations:
+  data/features/                  model metrics, predictions, equity curves
+  models_saved/                   final fitted models for reuse / latest inference
+  reports/summary/                experiment summaries, tuning tables, stability studies
+  reports/figures/                generated PDF figures
+  reports/trading/                interactive HTML trading charts
+
+Common selector semantics:
+  --model
+    ML: ridge, lasso, svm, rf, lgbm, xgboost
+    DL: lstm, cnn_lstm, gru, tcn
+  --task
+    classification: predict next-day direction_h
+    regression: predict next-day log_ret_h
+  --dataset-variant
+    onchain         raw on-chain factors only
+    ta              price / TA / calendar-style features
+    all             full feature set
+    boruta_onchain  screened on-chain factors
+    boruta_ta       screened TA-side features
+    boruta_all      screened full feature set
+    univariate      single close-price baseline
+
+Practical rule of thumb:
+  Use --help to see common choices quickly.
+  Use show-search-space when you need the detailed tuning candidate set.
 """
+
 from __future__ import annotations
 
 import copy
@@ -57,6 +91,30 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("cli")
+
+# ── Common CLI choices / help text ───────────────────────────
+# These constants are reused in command help so users can learn the
+# common model / task / feature-subset choices without opening YAML.
+
+TASK_CHOICES = ["classification", "regression"]
+DATASET_VARIANTS = [
+    "onchain",
+    "ta",
+    "all",
+    "boruta_onchain",
+    "boruta_ta",
+    "boruta_all",
+    "univariate",
+]
+MODEL_HELP_TEXT = (
+    "Model name. Common choices: ridge, lasso, svm, rf, lgbm, xgboost, "
+    "lstm, cnn_lstm, gru, tcn."
+)
+TASK_HELP_TEXT = "Task name. Choices: classification, regression."
+DATASET_VARIANT_HELP_TEXT = (
+    "Feature subset. Choices: onchain, ta, all, boruta_onchain, "
+    "boruta_ta, boruta_all, univariate."
+)
 
 # ── Helpers ───────────────────────────────────────────────────
 
@@ -794,6 +852,50 @@ def _resolve_tuning_space(exp_cfg: dict, model_name: str, task_name: str) -> dic
     return _builtin_tuning_space(model_name, task_name)
 
 
+def _search_value_to_text(spec) -> str:
+    if isinstance(spec, list):
+        return ", ".join(str(x) for x in spec)
+    if isinstance(spec, dict):
+        dist = str(spec.get("distribution", "categorical")).lower()
+        if dist == "categorical":
+            choices = spec.get("choices", [])
+            return f"categorical({', '.join(str(x) for x in choices)})"
+        if dist in {"uniform", "loguniform", "int"}:
+            low = spec.get("low")
+            high = spec.get("high")
+            step = spec.get("step")
+            if step is not None:
+                return f"{dist}[{low}, {high}] step={step}"
+            return f"{dist}[{low}, {high}]"
+    return str(spec)
+
+
+def _collect_search_space_rows(exp_cfg: dict, model_name: Optional[str], task_name: Optional[str]) -> list[dict[str, str]]:
+    comparison_cfg = exp_cfg.get("comparison", {})
+    ml_models = [str(m).lower() for m in comparison_cfg.get("ml_models", [])]
+    dl_models = [str(m).lower() for m in comparison_cfg.get("dl_models", [])]
+    configured_models = list(dict.fromkeys(ml_models + dl_models + ["ridge", "lasso", "svm", "rf", "lgbm", "xgboost"]))
+    tasks = [task_name] if task_name else ["classification", "regression"]
+    models = [model_name.lower()] if model_name else configured_models
+
+    rows: list[dict[str, str]] = []
+    for model in models:
+        for task in tasks:
+            space = _resolve_tuning_space(exp_cfg, model, task)
+            if not space:
+                continue
+            for param_name, spec in space.items():
+                rows.append(
+                    {
+                        "model": model,
+                        "task": task,
+                        "parameter": str(param_name),
+                        "candidate_space": _search_value_to_text(spec),
+                    }
+                )
+    return rows
+
+
 def _sample_search_value(spec, rng: random.Random):
     if isinstance(spec, list):
         return copy.deepcopy(rng.choice(spec))
@@ -1147,6 +1249,45 @@ def build_features(config: str, data_config: str, force: bool):
     click.secho(f"✓ build-features complete → {out_path}", fg="green", bold=True)
 
 
+@cli.command("show-search-space")
+@click.option("--config", default="configs/experiment.yaml", show_default=True)
+@click.option("--model", default=None, help=MODEL_HELP_TEXT)
+@click.option(
+    "--task",
+    "task_name",
+    type=click.Choice(TASK_CHOICES, case_sensitive=False),
+    default=None,
+    help=TASK_HELP_TEXT,
+)
+@click.option("--out", default=None, help="Optional markdown output path.")
+def show_search_space(config: str, model: Optional[str], task_name: Optional[str], out: Optional[str]):
+    """Print tuning candidate spaces so users do not need to inspect YAML manually."""
+    exp_cfg = _load_exp_cfg(config)
+    rows = _collect_search_space_rows(exp_cfg, model, task_name)
+    if not rows:
+        raise click.ClickException("No tuning search space found for the requested filters.")
+
+    df = pd.DataFrame(rows)
+    click.echo("\n── Tuning Search Space ──")
+    current_model = None
+    current_task = None
+    for row in rows:
+        if row["model"] != current_model or row["task"] != current_task:
+            current_model = row["model"]
+            current_task = row["task"]
+            click.echo(f"\n[{current_model} | {current_task}]")
+        click.echo(f"  {row['parameter']}: {row['candidate_space']}")
+
+    if out:
+        out_path = Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("# Tuning Search Space\n\n")
+            f.write(_dataframe_to_markdown(df))
+            f.write("\n")
+        click.echo(f"\nSaved markdown → {out_path}")
+
+
 # ── data-audit ───────────────────────────────────────────────
 
 @cli.command("data-audit")
@@ -1155,9 +1296,8 @@ def build_features(config: str, data_config: str, force: bool):
 @click.option(
     "--dataset-variant",
     default="all",
-    type=click.Choice(
-        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
-    ),
+    type=click.Choice(DATASET_VARIANTS),
+    help=DATASET_VARIANT_HELP_TEXT,
 )
 def data_audit(config: str, data_config: str, dataset_variant: str):
     """Run data quality audit and export CSV summaries."""
@@ -1236,24 +1376,27 @@ def pipeline_prepare(config: str, data_config: str, force: bool, dataset_variant
 
 
 # ── tune ──────────────────────────────────────────────────────
+# Main hyperparameter search entry.
+# Typical usage:
+#   - classification + boruta_onchain for directional chain-signal tests
+#   - regression + boruta_onchain for return-forecast / trading-value tests
+#   - show-search-space first if you need the exact candidate set
 
 @cli.command("tune")
 @click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default=None, type=str, help="Model to tune.")
+@click.option("--model", "model_name", default=None, type=str, help=MODEL_HELP_TEXT)
 @click.option(
     "--task",
     default=None,
-    type=click.Choice(["regression", "classification"]),
-    help="Task to tune. Default resolves from config.",
+    type=click.Choice(TASK_CHOICES),
+    help=f"{TASK_HELP_TEXT} Default resolves from config.",
 )
 @click.option(
     "--dataset-variant",
     default=None,
-    type=click.Choice(
-        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
-    ),
-    help="Dataset variant. Default resolves from config.",
+    type=click.Choice(DATASET_VARIANTS),
+    help=f"{DATASET_VARIANT_HELP_TEXT} Default resolves from config.",
 )
 @click.option("--trials", default=None, type=int, help="Override random-search trial count.")
 @click.option("--metric", default=None, type=str, help="Objective metric. Default uses primary selection metric.")
@@ -1486,24 +1629,28 @@ def tune(
 
 
 # ── train ─────────────────────────────────────────────────────
+# Main OOS experiment command.
+# This is the command that generates walk-forward predictions used later by:
+#   - backtest
+#   - report
+#   - halving-strategy-study
+# If you care about paper-grade results, this command is usually the source of truth.
 
 @cli.command("train")
 @click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default=None, type=str, help="Model to train.")
+@click.option("--model", "model_name", default=None, type=str, help=MODEL_HELP_TEXT)
 @click.option(
     "--task",
     default=None,
-    type=click.Choice(["regression", "classification"]),
-    help="Prediction task. Default resolves from config.",
+    type=click.Choice(TASK_CHOICES),
+    help=f"{TASK_HELP_TEXT} Default resolves from config.",
 )
 @click.option(
     "--dataset-variant",
     default=None,
-    type=click.Choice(
-        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
-    ),
-    help="Dataset variant. Default resolves from config.",
+    type=click.Choice(DATASET_VARIANTS),
+    help=f"{DATASET_VARIANT_HELP_TEXT} Default resolves from config.",
 )
 def train(
     config: str,
@@ -1751,20 +1898,18 @@ def train(
 @cli.command("predict-latest")
 @click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default=None, type=str, help="Model to use.")
+@click.option("--model", "model_name", default=None, type=str, help=MODEL_HELP_TEXT)
 @click.option(
     "--task",
     default=None,
-    type=click.Choice(["regression", "classification"]),
-    help="Prediction task. Default: run all enabled tasks.",
+    type=click.Choice(TASK_CHOICES),
+    help=f"{TASK_HELP_TEXT} Default: run all enabled tasks.",
 )
 @click.option(
     "--dataset-variant",
     default=None,
-    type=click.Choice(
-        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
-    ),
-    help="Dataset variant. Default resolves from config.",
+    type=click.Choice(DATASET_VARIANTS),
+    help=f"{DATASET_VARIANT_HELP_TEXT} Default resolves from config.",
 )
 @click.option("--force", is_flag=True, default=False, help="Force re-download/rebuild latest data.")
 def predict_latest(
@@ -1890,24 +2035,26 @@ def predict_latest(
 
 
 # ── test-full-history ────────────────────────────────────────
+# Full-history scoring command.
+# Use this only when you want to score the saved final model on the whole
+# labeled history. It is useful for sanity checks, but it is not the same
+# as strict walk-forward OOS evaluation.
 
 @cli.command("test-full-history")
 @click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default=None, type=str, help="Saved final model to use.")
+@click.option("--model", "model_name", default=None, type=str, help=MODEL_HELP_TEXT)
 @click.option(
     "--task",
     default=None,
-    type=click.Choice(["regression", "classification"]),
-    help="Prediction task. Default resolves from config.",
+    type=click.Choice(TASK_CHOICES),
+    help=f"{TASK_HELP_TEXT} Default resolves from config.",
 )
 @click.option(
     "--dataset-variant",
     default=None,
-    type=click.Choice(
-        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
-    ),
-    help="Dataset variant. Default resolves from config.",
+    type=click.Choice(DATASET_VARIANTS),
+    help=f"{DATASET_VARIANT_HELP_TEXT} Default resolves from config.",
 )
 @click.option(
     "--cost-bps",
@@ -2070,22 +2217,26 @@ def test_full_history(
 
 
 @cli.command("halving-strategy-study")
+# Stability / strategy-mapping study on saved predictions.
+# It keeps the model fixed and only changes:
+#   1. period slices (full sample + fixed halving cycles)
+#   2. signal / exposure mapping rules
+# This is where you test whether a model's prediction signal is better as
+# long_only, full_exposure_sign, or quantile-based selective trading.
 @click.option("--config", default="configs/experiment.yaml")
 @click.option("--data-config", default="configs/data.yaml")
-@click.option("--model", "model_name", default=None, type=str, help="Model with saved OOS predictions.")
+@click.option("--model", "model_name", default=None, type=str, help=MODEL_HELP_TEXT)
 @click.option(
     "--task",
     default=None,
-    type=click.Choice(["regression", "classification"]),
-    help="Prediction task. Default resolves from config.",
+    type=click.Choice(TASK_CHOICES),
+    help=f"{TASK_HELP_TEXT} Default resolves from config.",
 )
 @click.option(
     "--dataset-variant",
     default=None,
-    type=click.Choice(
-        ["onchain", "ta", "all", "boruta_onchain", "boruta_ta", "boruta_all", "univariate"]
-    ),
-    help="Dataset variant. Default resolves from config.",
+    type=click.Choice(DATASET_VARIANTS),
+    help=f"{DATASET_VARIANT_HELP_TEXT} Default resolves from config.",
 )
 @click.option("--cost-bps", default=5.0, type=float, show_default=True)
 @click.option(
@@ -3228,5 +3379,3 @@ def validate(config: str, data_config: str):
 
 if __name__ == "__main__":
     cli()
-
-

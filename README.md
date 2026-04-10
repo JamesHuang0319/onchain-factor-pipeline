@@ -1,95 +1,48 @@
 # crypto_predict
 
-基于链上数据的 BTC 收益预测研究项目。当前仓库已经形成一条完整、可复现的研究流水线，覆盖数据下载、特征构建、特征筛选、时间序列训练、回测、报告生成、实验汇总和最新样本预测。
+基于链上数据的 BTC 收益预测研究项目。仓库已经形成一条完整、可复现的研究流水线，覆盖数据下载、特征构建、特征筛选、时间序列训练、回测、报告生成、实验汇总、稳健性分析和最新样本预测。
 
-## 当前阶段
+## 项目简介
 
 - 研究对象：`BTC-USD`
+- 频率：`日频`
 - 主数据源：`Coin Metrics Community API`
 - 兼容数据源：`Blockchain.com`
-- 当前标签：
-  - `classification`：次日涨跌方向
-  - `regression`：次日对数收益率 `log_ret_h`
-- 当前核心数据集：
-  - `onchain`
-  - `ta`
-  - `all`
-  - `boruta_onchain`
-  - `boruta_ta`
-  - `boruta_all`
-  - `univariate`
-- 输出前缀：`btc_predict`
+- 当前任务：
+  - `classification`：预测次日涨跌方向 `direction_h`
+  - `regression`：预测次日对数收益率 `log_ret_h`
+- 当前核心特征主线：`boruta_onchain`
 
-当前项目已经完成第一阶段主实验，重点转入“固定最优基线 + 扩展链上因子增量验证”。
+项目定位是论文研究流水线，不是纯策略工程仓库。当前重点是比较：
 
-## 已实现能力
+- 链上因子是否具有增量价值
+- 方向预测与幅度预测哪条线更适合交易
+- `ML` 与 `DL` 在统一 `OOS` 框架下谁更稳、谁上限更高
+
+## 当前状态
+
+已实现能力：
 
 - 数据下载：价格数据 + 链上数据
-- 特征工程：价格、TA、链上因子与交叉因子
-- 特征筛选：`boruta_*`
-  - 说明：当前是 `Boruta-like RF importance + Lasso/L1` 两阶段筛选，不是标准 Boruta 逐项复现
-- 时间序列训练：walk-forward
-- 自动回测与报告生成
+- 特征工程：价格、TA、链上因子与派生比值/变化率特征
+- 特征筛选：`Boruta-like RF importance + Lasso/L1` 两阶段筛选
+- 时间序列训练：`walk-forward`
+- 自动回测、图表生成、Markdown 报告
 - 最终模型保存与最新样本预测
-- 实验总表与模型选择结果自动汇总
-- 批量调参与批量实验脚本
+- 实验总表自动汇总
+- 固定减半周期稳健性分析
+- 固定策略空间搜索
+- `ML / DL` 批量调参与批量稳定性脚本
 
-## 已实现模型
+当前论文主线建议：
 
-机器学习模型：
+- 主线：经济价值 / 交易收益
+- 副线：方向预测
+- 重点特征集：`boruta_onchain`
 
-- `svm`
-- `rf`
-- `lgbm`
-- `xgboost`
-- `lasso`
-- `ridge`
+## 快速开始
 
-深度学习基线：
-
-- `lstm`
-- `cnn_lstm`
-- `gru`
-- `tcn`
-
-说明：
-
-- `xgboost` 属于树模型的梯度提升方法，不是深度学习。
-- 当前主线仍然是 `ML`，`DL` 已完成基线实现，但不是现阶段最优收益模型。
-
-## 当前阶段结果
-
-汇总文件：
-
-- [btc_predict_experiment_summary.csv](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_experiment_summary.csv)
-- [btc_predict_experiment_summary.md](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_experiment_summary.md)
-- [btc_predict_selection_summary.csv](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_selection_summary.csv)
-- [btc_predict_selection_summary.md](E:\Python_workplace\crypto_predict\reports\summary\btc_predict_selection_summary.md)
-
-当前按既定规则得到的阶段性结论：
-
-- 分类实验冠军：`svm + boruta_onchain`
-  - `F1 = 0.6765`
-- 分类收益冠军：`rf + boruta_onchain`
-  - `F1 = 0.6000`
-  - `5bps cumulative_return = 20.4650`
-  - `Sharpe = 0.8485`
-- 回归实验冠军：`lasso + boruta_all`
-  - `RMSE = 0.02777`
-- 回归收益冠军：`rf + boruta_onchain`
-  - `RMSE = 0.03303`
-  - `5bps cumulative_return = 13.2123`
-  - `Sharpe = 0.6945`
-- 当前最终收益模型：`rf + regression + boruta_onchain`
-
-这说明在当前这套数据、特征和验证框架下：
-
-- `SVM` 更像分类实验强者
-- `RF` 是最稳的收益主线
-- `boruta_onchain` 是当前最有价值的数据集版本
-- `XGBoost` 和 `LightGBM` 已完成完整实验，但尚未超过当前最优 `RF`
-
-## 最小运行流程
+### 1. 数据准备
 
 ```bash
 python -m src.cli download-data --config configs/experiment.yaml
@@ -98,92 +51,184 @@ python -m src.cli data-audit --config configs/experiment.yaml --dataset-variant 
 python -m src.cli validate --config configs/experiment.yaml
 ```
 
-单组实验：
+### 2. 单组实验
 
 ```bash
-python -m src.cli train --config configs/experiment.yaml --model rf --task regression --dataset-variant boruta_onchain
-python -m src.cli backtest --config configs/experiment.yaml --model rf --task regression --dataset-variant boruta_onchain
-python -m src.cli report --config configs/experiment.yaml --model rf --task regression --dataset-variant boruta_onchain
+python -m src.cli tune --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+python -m src.cli train --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+python -m src.cli backtest --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+python -m src.cli report --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
 ```
 
-最新样本预测：
+### 3. 查看调参候选集
+
+```bash
+python -m src.cli show-search-space --model rf --task classification
+python -m src.cli show-search-space --model tcn --task regression
+```
+
+导出成 Markdown：
+
+```bash
+python -m src.cli show-search-space --out reports/summary/tuning_search_spaces.md
+```
+
+### 4. 稳健性与策略映射
+
+```bash
+python -m src.cli halving-strategy-study --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain --cost-bps 5 --prediction-scope oos
+```
+
+### 5. 最新样本预测
 
 ```bash
 python -m src.cli predict-latest --config configs/experiment.yaml --model rf --task regression --dataset-variant boruta_onchain
 ```
 
-刷新实验总表：
+### 6. 刷新实验总表
 
 ```bash
 python -m src.cli experiment-summary --config configs/experiment.yaml --cost-bps 5
 ```
 
-## 批量调参与批量实验
+## CLI 常用命令
 
-核心批量实验脚本：
+- `download-data`
+  - 下载价格和链上数据，带缓存
+- `build-features`
+  - 构建完整特征数据集
+- `data-audit`
+  - 输出样本覆盖、标签分布、训练集划分摘要
+- `validate`
+  - 运行防泄漏检查
+- `show-search-space`
+  - 查看每个模型/任务的调参候选集
+- `tune`
+  - 随机搜索超参数，并可自动触发 `train/backtest/report`
+- `train`
+  - 运行 `walk-forward OOS` 训练并保存预测
+- `backtest`
+  - 对已保存预测执行回测
+- `report`
+  - 生成 PDF 图表和 Markdown 报告
+- `predict-latest`
+  - 用最终模型预测最新样本
+- `test-full-history`
+  - 用保存的最终模型对完整历史重新打分
+- `halving-strategy-study`
+  - 固定模型，搜索策略映射并做减半周期稳健性分析
+- `experiment-summary`
+  - 汇总当前实验产物，形成总表
 
-- [run_core_experiments.ps1](E:\Python_workplace\crypto_predict\scripts\run_core_experiments.ps1)
-- [run_ml_tuning_full.ps1](E:\Python_workplace\crypto_predict\scripts\run_ml_tuning_full.ps1)
+## 公共参数说明
 
-完整 `RF / XGBoost / LightGBM` 调参与实验：
+### `--model`
+
+机器学习模型：
+
+- `ridge`
+- `lasso`
+- `svm`
+- `rf`
+- `lgbm`
+- `xgboost`
+
+深度学习模型：
+
+- `lstm`
+- `cnn_lstm`
+- `gru`
+- `tcn`
+
+### `--task`
+
+- `classification`
+  - 方向预测，目标列是 `direction_h`
+- `regression`
+  - 幅度预测，目标列是 `log_ret_h`
+
+### `--dataset-variant`
+
+- `onchain`
+  - 原始链上特征
+- `ta`
+  - 价格 / TA / 日历结构特征
+- `all`
+  - 全部特征
+- `boruta_onchain`
+  - 筛选后的链上特征
+- `boruta_ta`
+  - 筛选后的 TA / 时间结构特征
+- `boruta_all`
+  - 筛选后的全特征集
+- `univariate`
+  - 单变量价格基线
+
+## 批量脚本
+
+调参与主实验：
+
+- [`scripts/run_core_experiments.ps1`](scripts/run_core_experiments.ps1)
+- [`scripts/run_ml_tuning_full.ps1`](scripts/run_ml_tuning_full.ps1)
+- [`scripts/run_dl_tuning_full.ps1`](scripts/run_dl_tuning_full.ps1)
+
+减半周期 / 策略空间稳定性：
+
+- [`scripts/run_ml_halving_strategy_full.ps1`](scripts/run_ml_halving_strategy_full.ps1)
+- [`scripts/run_dl_halving_strategy_full.ps1`](scripts/run_dl_halving_strategy_full.ps1)
+
+示例：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_ml_tuning_full.ps1 -Models rf,xgboost,lgbm -Trials 20
+.\scripts\run_ml_tuning_full.ps1 -Models rf,xgboost,lgbm -Trials 20
+.\scripts\run_dl_halving_strategy_full.ps1 -Models 'lstm','cnn_lstm','gru','tcn' -Tasks 'classification','regression' -Variants 'boruta_onchain','onchain' -CostBps 5 -PredictionScope oos
 ```
 
-脚本会输出：
-
-- 当前进度
-- 已耗时
-- 平均每组耗时
-- 预计剩余时间
-- 每组状态与日志
-
-## 主要输出目录
+## 输出目录
 
 - `data/features/`
   - 特征集、预测结果、指标 JSON、回测产物
 - `models_saved/`
   - 最终模型与元信息
 - `reports/summary/`
-  - 汇总表、阶段报告、最新预测、选择结果，以及按主题分组的子目录
+  - 汇总表、调参结果、稳定性分析、最新预测
 - `reports/figures/`
-  - Equity、Drawdown、Pred vs Actual 图
+  - `Equity / Drawdown / Pred vs Actual` 图
 - `reports/trading/`
   - 交互式交易图
 - `reports/batch_runs/`
-  - 批量实验日志和批次汇总
+  - 批量实验日志
 
-## 当前研究主线
+## 研究主线
 
-当前最重要的问题已经不是继续补流程，而是回答下面三个问题：
+当前最值得聚焦的问题是：
 
-1. 链上因子相对纯价格/TA 是否存在稳定增量价值
-2. 方向预测与幅度预测，哪一条线更适合交易
-3. 在现有数据和验证框架下，哪种模型最稳、最能转化为收益
+1. `boruta_onchain` 相对原始链上特征是否更稳定
+2. 分类与回归信号，哪一种更容易转化为收益
+3. `ML` 与 `DL` 在统一 `OOS` 和统一策略空间下谁更稳、谁上限更高
 
-当前建议顺序：
+当前仓库里的结果已经表明：
 
-1. 固定当前最优 `RF` 基线
-2. 扩有历史数据的链上因子
-3. 与当前基线做增量比较
-4. 再决定是否继续做更深的模型优化
+- 分类任务通常是 `ML` 更稳
+- 回归任务中，部分 `DL` 模型具有更高收益上限
+- 不能只看 `F1 / RMSE`，还必须结合：
+  - `cumulative return`
+  - `Sharpe`
+  - `max drawdown`
+  - 成本敏感性
+  - 分周期稳健性
 
-## 文档
+## 文档入口
 
-- [PROJECT_PLAN.md](E:\Python_workplace\crypto_predict\docs\PROJECT_PLAN.md)
-- [DATA_FOUNDATION_PLAN.md](E:\Python_workplace\crypto_predict\docs\DATA_FOUNDATION_PLAN.md)
-- [METHODOLOGY.md](E:\Python_workplace\crypto_predict\docs\METHODOLOGY.md)
-- [EXPERIMENTS.md](E:\Python_workplace\crypto_predict\docs\EXPERIMENTS.md)
-- [THESIS_NOTES.md](E:\Python_workplace\crypto_predict\docs\THESIS_NOTES.md)
-- [REPO_LAYOUT.md](E:\Python_workplace\crypto_predict\docs\REPO_LAYOUT.md)
+- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
+- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md)
+- [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md)
+- [`docs/THESIS_NOTES.md`](docs/THESIS_NOTES.md)
+- [`docs/REPO_LAYOUT.md`](docs/REPO_LAYOUT.md)
 
 ## 说明
 
-- 本项目当前是 `paper-guided`，不是参考论文的逐项严格复现。
-- 模型判断不能只看单一指标，应同时看：
-  - 预测指标
-  - 收益表现
-  - Sharpe
-  - Max Drawdown
-  - 成本敏感性
+- 本项目是 `paper-guided`，不是对参考论文的逐项严格复现
+- 当前最强结果不代表所有市场周期都同样有效
+- `test-full-history` 结果不能替代严格 `OOS`
+- 深度学习模型对训练路径更敏感，解释结果时应结合稳健性分析
