@@ -61,7 +61,7 @@ foreach ($job in $jobs) {
     $remainingSeconds = [math]::Max(0, [int]($avgSeconds * $remainingJobs))
     $eta = [TimeSpan]::FromSeconds($remainingSeconds)
 
-    Write-Host ("[{0}/{1}] halving-strategy-study {2} {3} {4}" -f $completed, $total, $job.Model, $job.Task, $job.Variant) -ForegroundColor Yellow
+    Write-Host ("[{0}/{1}] strategy-stability {2} {3} {4}" -f $completed, $total, $job.Model, $job.Task, $job.Variant) -ForegroundColor Yellow
     Write-Host ("  elapsed={0:hh\:mm\:ss} | eta={1:hh\:mm\:ss} | cost_bps={2} | prediction_scope={3}" -f $elapsed, $eta, $CostBps, $PredictionScope)
 
     $cmd = @(

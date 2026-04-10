@@ -1,12 +1,13 @@
 param(
     [string]$Config = "configs/experiment.yaml",
     [string]$DataConfig = "configs/data.yaml",
-    [string[]]$Models = @("svm", "lgbm", "rf"),
+    [string]$ArtifactPrefix = "btc_predict",
+    [string[]]$Models = @("tcn", "lstm", "cnn_lstm"),
     [string[]]$Tasks = @("classification", "regression"),
-    [string[]]$Variants = @("onchain", "all", "boruta_onchain", "boruta_all"),
-    [switch]$SkipTrain,
-    [switch]$SkipBacktest,
-    [switch]$SkipReport,
+    [string[]]$Variants = @("boruta_onchain"),
+    [double]$CostBps = 5.0,
+    [switch]$RunLatest,
+    [switch]$RunSummary,
     [switch]$ContinueOnError
 )
 
@@ -17,6 +18,11 @@ Set-Location $projectRoot
 
 $logRoot = Join-Path $projectRoot "reports\batch_runs"
 $null = New-Item -ItemType Directory -Force -Path $logRoot
+$demoRoot = Join-Path $projectRoot "reports\demos"
+$demoFiguresDir = Join-Path $demoRoot "figures"
+$demoTradingDir = Join-Path $demoRoot "trading"
+$demoSummariesDir = Join-Path $demoRoot "summaries"
+$null = New-Item -ItemType Directory -Force -Path $demoFiguresDir, $demoTradingDir, $demoSummariesDir
 
 function Format-Duration {
     param([double]$Seconds)
@@ -28,12 +34,13 @@ function Format-Duration {
     return ("{0:d2}:{1:d2}" -f $ts.Minutes, $ts.Seconds)
 }
 
-function Invoke-ExperimentStep {
+function Invoke-DemoStep {
     param(
         [string]$Model,
         [string]$Task,
         [string]$Variant,
         [string]$Step,
+        [string[]]$ExtraArgs,
         [int]$JobIndex,
         [int]$JobTotal,
         [datetime]$BatchStart,
@@ -42,9 +49,9 @@ function Invoke-ExperimentStep {
         [int]$CurrentStepIndex
     )
 
-    $logFile = Join-Path $logRoot ("{0}_{1}_{2}_{3}.log" -f $Model, $Task, $Variant, $Step)
-    $stdoutFile = Join-Path $logRoot ("{0}_{1}_{2}_{3}.stdout.tmp" -f $Model, $Task, $Variant, $Step)
-    $stderrFile = Join-Path $logRoot ("{0}_{1}_{2}_{3}.stderr.tmp" -f $Model, $Task, $Variant, $Step)
+    $logFile = Join-Path $logRoot ("demo_{0}_{1}_{2}_{3}.log" -f $Model, $Task, $Variant, $Step)
+    $stdoutFile = Join-Path $logRoot ("demo_{0}_{1}_{2}_{3}.stdout.tmp" -f $Model, $Task, $Variant, $Step)
+    $stderrFile = Join-Path $logRoot ("demo_{0}_{1}_{2}_{3}.stderr.tmp" -f $Model, $Task, $Variant, $Step)
     $arguments = @(
         "-m", "src.cli", $Step,
         "--config", $Config,
@@ -52,7 +59,7 @@ function Invoke-ExperimentStep {
         "--model", $Model,
         "--task", $Task,
         "--dataset-variant", $Variant
-    )
+    ) + $ExtraArgs
 
     $elapsedBatchSeconds = ((Get-Date) - $BatchStart).TotalSeconds
     $remainingJobs = $JobTotal - $JobIndex
@@ -62,10 +69,7 @@ function Invoke-ExperimentStep {
     Write-Host ""
     Write-Host "Progress: job $JobIndex/$JobTotal | step $stepLabel" -ForegroundColor Yellow
     Write-Host "[$Step] model=$Model task=$Task variant=$Variant" -ForegroundColor Cyan
-    $elapsedText = Format-Duration $elapsedBatchSeconds
-    $avgText = Format-Duration $AverageJobSeconds
-    $etaText = Format-Duration $etaSeconds
-    Write-Host "elapsed=$elapsedText | avg/job=$avgText | eta~$etaText"
+    Write-Host "elapsed=$(Format-Duration $elapsedBatchSeconds) | avg/job=$(Format-Duration $AverageJobSeconds) | eta~$(Format-Duration $etaSeconds)"
     Write-Host "log -> $logFile"
 
     if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force }
@@ -97,6 +101,33 @@ function Invoke-ExperimentStep {
     if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force }
 }
 
+function Copy-DemoArtifacts {
+    param(
+        [string]$Model,
+        [string]$Task,
+        [string]$Variant
+    )
+
+    $summaryName = "{0}_summary_{1}_{2}_{3}.md" -f $ArtifactPrefix, $Model, $Task, $Variant
+    $summarySrc = Join-Path $projectRoot "reports\experiments\summaries\$summaryName"
+    $equitySrc = Join-Path $projectRoot ("reports\experiments\figures\{0}_{1}_{2}_{3}_equity.pdf" -f $ArtifactPrefix, $Model, $Task, $Variant)
+    $drawdownSrc = Join-Path $projectRoot ("reports\experiments\figures\{0}_{1}_{2}_{3}_drawdown.pdf" -f $ArtifactPrefix, $Model, $Task, $Variant)
+    $predSrc = Join-Path $projectRoot ("reports\experiments\figures\{0}_{1}_{2}_{3}_pred_vs_actual.pdf" -f $ArtifactPrefix, $Model, $Task, $Variant)
+    $tradingSrc = Join-Path $projectRoot ("reports\experiments\trading\BTC_USD_{0}_trading_chart.html" -f $Model)
+
+    foreach ($pair in @(
+        @{ src = $summarySrc; dst = (Join-Path $demoSummariesDir $summaryName) },
+        @{ src = $equitySrc; dst = (Join-Path $demoFiguresDir ([IO.Path]::GetFileName($equitySrc))) },
+        @{ src = $drawdownSrc; dst = (Join-Path $demoFiguresDir ([IO.Path]::GetFileName($drawdownSrc))) },
+        @{ src = $predSrc; dst = (Join-Path $demoFiguresDir ([IO.Path]::GetFileName($predSrc))) },
+        @{ src = $tradingSrc; dst = (Join-Path $demoTradingDir ([IO.Path]::GetFileName($tradingSrc))) }
+    )) {
+        if (Test-Path $pair.src) {
+            Copy-Item -Path $pair.src -Destination $pair.dst -Force
+        }
+    }
+}
+
 $matrix = foreach ($model in $Models) {
     foreach ($task in $Tasks) {
         foreach ($variant in $Variants) {
@@ -115,20 +146,17 @@ $index = 0
 $batchStart = Get-Date
 $completedJobDurations = New-Object System.Collections.Generic.List[double]
 
-$plannedSteps = 0
-if (-not $SkipTrain) { $plannedSteps += 1 }
-if (-not $SkipBacktest) { $plannedSteps += 1 }
-if (-not $SkipReport) { $plannedSteps += 1 }
+$plannedSteps = 2
+if ($RunLatest) { $plannedSteps += 1 }
 if ($plannedSteps -eq 0) { $plannedSteps = 1 }
 
 foreach ($job in $matrix) {
     $index += 1
     $jobStart = Get-Date
-    if ($completedJobDurations.Count -gt 0) {
-        $averageJobSeconds = ($completedJobDurations | Measure-Object -Average).Average
-    }
-    else {
-        $averageJobSeconds = 120
+    $averageJobSeconds = if ($completedJobDurations.Count -gt 0) {
+        ($completedJobDurations | Measure-Object -Average).Average
+    } else {
+        60
     }
 
     Write-Host ""
@@ -139,17 +167,16 @@ foreach ($job in $matrix) {
     $stepCounter = 0
 
     try {
-        if (-not $SkipTrain) {
+        $stepCounter += 1
+        Invoke-DemoStep -Model $job.Model -Task $job.Task -Variant $job.Variant -Step "backtest" -ExtraArgs @() -JobIndex $index -JobTotal $total -BatchStart $batchStart -AverageJobSeconds $averageJobSeconds -PlannedSteps $plannedSteps -CurrentStepIndex $stepCounter
+
+        $stepCounter += 1
+        Invoke-DemoStep -Model $job.Model -Task $job.Task -Variant $job.Variant -Step "report" -ExtraArgs @() -JobIndex $index -JobTotal $total -BatchStart $batchStart -AverageJobSeconds $averageJobSeconds -PlannedSteps $plannedSteps -CurrentStepIndex $stepCounter
+        Copy-DemoArtifacts -Model $job.Model -Task $job.Task -Variant $job.Variant
+
+        if ($RunLatest) {
             $stepCounter += 1
-            Invoke-ExperimentStep -Model $job.Model -Task $job.Task -Variant $job.Variant -Step "train" -JobIndex $index -JobTotal $total -BatchStart $batchStart -AverageJobSeconds $averageJobSeconds -PlannedSteps $plannedSteps -CurrentStepIndex $stepCounter
-        }
-        if (-not $SkipBacktest) {
-            $stepCounter += 1
-            Invoke-ExperimentStep -Model $job.Model -Task $job.Task -Variant $job.Variant -Step "backtest" -JobIndex $index -JobTotal $total -BatchStart $batchStart -AverageJobSeconds $averageJobSeconds -PlannedSteps $plannedSteps -CurrentStepIndex $stepCounter
-        }
-        if (-not $SkipReport) {
-            $stepCounter += 1
-            Invoke-ExperimentStep -Model $job.Model -Task $job.Task -Variant $job.Variant -Step "report" -JobIndex $index -JobTotal $total -BatchStart $batchStart -AverageJobSeconds $averageJobSeconds -PlannedSteps $plannedSteps -CurrentStepIndex $stepCounter
+            Invoke-DemoStep -Model $job.Model -Task $job.Task -Variant $job.Variant -Step "predict-latest" -ExtraArgs @() -JobIndex $index -JobTotal $total -BatchStart $batchStart -AverageJobSeconds $averageJobSeconds -PlannedSteps $plannedSteps -CurrentStepIndex $stepCounter
         }
     }
     catch {
@@ -180,14 +207,17 @@ foreach ($job in $matrix) {
     $completedJobDurations.Add($jobElapsedSeconds)
 }
 
+if ($RunSummary) {
+    & python -m src.cli experiment-summary --config $Config --data-config $DataConfig --cost-bps $CostBps
+}
+
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$summaryPath = Join-Path $logRoot "summary_$timestamp.csv"
+$summaryPath = Join-Path $logRoot "dl_demo_summary_$timestamp.csv"
 $summary | Export-Csv -Path $summaryPath -NoTypeInformation -Encoding UTF8
 
 Write-Host ""
-Write-Host "=== Batch Summary ===" -ForegroundColor Green
-$totalElapsedSeconds = ((Get-Date) - $batchStart).TotalSeconds
-Write-Host "total_elapsed=$(Format-Duration $totalElapsedSeconds)"
+Write-Host "=== Demo Summary ===" -ForegroundColor Green
+Write-Host "total_elapsed=$(Format-Duration (((Get-Date) - $batchStart).TotalSeconds))"
 $summary | Format-Table -AutoSize
 Write-Host "summary -> $summaryPath"
 

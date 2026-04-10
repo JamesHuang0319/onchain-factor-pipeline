@@ -11,13 +11,13 @@
 
 | prediction_scope | model | task | variant | strategy | prediction_start | cost_bps | exposure_rate | long_rate | short_rate | cumulative_return | annualised_return | sharpe_ratio | max_drawdown | turnover | n_days |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| oos | xgboost | regression | boruta_onchain | long_only_sign | 2018-03-17 | 5.000000 | 0.513423 | 0.513423 | 0.000000 | 6.746347 | 0.194016 | 0.496692 | -0.717599 | 0.271951 | 4214 |
+| oos | xgboost | regression | boruta_onchain | full_exposure_sign | 2018-03-17 | 5.000000 | 1.000000 | 0.513423 | 0.486577 | 16.369210 | 0.280516 | 0.532922 | -0.802960 | 0.533935 | 4214 |
 
 ## Best by Sharpe
 
 | prediction_scope | model | task | variant | strategy | prediction_start | cost_bps | exposure_rate | long_rate | short_rate | cumulative_return | annualised_return | sharpe_ratio | max_drawdown | turnover | n_days |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| oos | xgboost | regression | boruta_onchain | quantile_long_only_0.10 | 2018-03-17 | 5.000000 | 0.100141 | 0.100141 | 0.000000 | 3.075282 | 0.129404 | 0.686049 | -0.325738 | 0.091599 | 4214 |
+| oos | xgboost | regression | boruta_onchain | quantile_ls_0.10 | 2018-03-17 | 5.000000 | 0.200283 | 0.100141 | 0.100141 | 8.369146 | 0.213849 | 0.743109 | -0.563670 | 0.193166 | 4214 |
 
 ## Fixed Halving Periods
 

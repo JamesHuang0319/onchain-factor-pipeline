@@ -164,12 +164,18 @@ python -m src.cli halving-strategy-study --config configs/experiment.yaml --mode
 
 ### Stability / strategy
 
-- `scripts/run_ml_halving_strategy_full.ps1`
-- `scripts/run_dl_halving_strategy_full.ps1`
+- `scripts/run_ml_strategy_stability_full.ps1`
+- `scripts/run_dl_strategy_stability_full.ps1`
 
-### Core experiment batch
+### Fixed-parameter batch
 
-- `scripts/run_core_experiments.ps1`
+- `scripts/run_ml_fixed_experiments.ps1`
+- `scripts/run_dl_fixed_experiments.ps1`
+
+说明：
+
+- 这两个脚本只跑固定参数下的 `train -> backtest -> report`
+- 不做 `tune`
 
 ## 5. Output Location Standard
 
@@ -180,8 +186,13 @@ python -m src.cli halving-strategy-study --config configs/experiment.yaml --mode
 - `reports/summary/`
 - `reports/summary/tuning/`
 - `reports/summary/stability/`
-- `reports/figures/`
-- `reports/trading/`
+- `reports/summary/model_selection/`
+- `reports/summary/final_tables/`
+- `reports/summary/diagnostics/`
+- `reports/experiments/figures/`
+- `reports/experiments/trading/`
+- `reports/experiments/summaries/`
+- `reports/demos/`
 - `reports/batch_runs/`
 
 不再使用旧的 `reports/00_summary` 路径。

@@ -47,18 +47,18 @@
 
 ## Scripts
 
-- `scripts/run_core_experiments.ps1`
-  - 核心实验批量运行脚本。
+- `scripts/run_ml_fixed_experiments.ps1`
+  - `ML` 固定参数批量 `train/backtest/report` 脚本。
+- `scripts/run_dl_fixed_experiments.ps1`
+  - `DL` 固定参数批量 `train/backtest/report` 脚本。
 - `scripts/run_ml_tuning_full.ps1`
   - `ML` 批量调参脚本。
 - `scripts/run_dl_tuning_full.ps1`
   - `DL` 批量调参脚本。
-- `scripts/run_ml_halving_strategy_full.ps1`
-  - `ML` 固定策略空间 + 减半周期稳定性批量脚本。
-- `scripts/run_dl_halving_strategy_full.ps1`
-  - `DL` 固定策略空间 + 减半周期稳定性批量脚本。
-- `scripts/migrate_artifact_prefix.ps1`
-  - 历史产物前缀迁移辅助脚本。
+- `scripts/run_ml_strategy_stability_full.ps1`
+  - `ML` 固定策略空间 + 分周期稳健性批量脚本。
+- `scripts/run_dl_strategy_stability_full.ps1`
+  - `DL` 固定策略空间 + 分周期稳健性批量脚本。
 
 ## Generated Artifacts
 
@@ -75,18 +75,36 @@
 
 - `reports/summary/`
   - 汇总结果主目录。
+- `reports/summary/model_selection/`
+  - `ML / DL` 对比、模型筛选与统一汇总表。
+- `reports/summary/final_tables/`
+  - 最终论文倾向使用的总表与综合摘要。
 - `reports/summary/tuning/`
   - 随机搜索 trial 记录与 best 参数。
 - `reports/summary/stability/`
   - `halving-strategy-study`、分周期稳健性与策略搜索结果。
+- `reports/summary/diagnostics/`
+  - IC 诊断与相关辅助表。
 - `reports/summary/latest_predictions/`
   - 最新样本预测摘要。
 - `reports/summary/data_audit/`
   - 数据审计结果。
-- `reports/figures/`
+- `reports/experiments/`
+  - 正式实验输出。
+- `reports/experiments/figures/`
   - PDF 图表，如 `equity / drawdown / pred_vs_actual`。
-- `reports/trading/`
+- `reports/experiments/trading/`
   - 交互式 HTML 交易图。
+- `reports/experiments/summaries/`
+  - 单模型正式 Markdown 报告。
+- `reports/demos/`
+  - 演示 / 录视频专用副本。
+- `reports/demos/figures/`
+  - 演示用 PDF 图。
+- `reports/demos/trading/`
+  - 演示用 HTML 图。
+- `reports/demos/summaries/`
+  - 演示用 Markdown 报告。
 - `reports/batch_runs/`
   - 批量实验日志。
 

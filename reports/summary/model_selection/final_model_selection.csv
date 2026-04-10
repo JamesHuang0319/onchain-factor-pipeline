@@ -1,0 +1,8 @@
+role,model,task,variant,best_return,best_return_strategy,best_sharpe,best_sharpe_strategy,prediction_start,notes
+ml_classification_primary,rf,classification,boruta_onchain,40.34643182512514,sign_band_0.005,1.0450031653942429,quantile_long_only_0.05,2018-03-17,Classification main baseline; best balance of robustness and trading quality.
+ml_classification_return,xgboost,classification,boruta_onchain,42.40778426093396,sign_band_0.01,0.8191185864203532,long_only_band_0.01,2018-03-17,Classification return-oriented ML counterpart with higher upside than RF.
+ml_regression_primary,svm,regression,boruta_onchain,50.69598700474484,full_exposure_sign,0.9221391401007963,quantile_long_only_0.20,2018-03-17,Strongest traditional regression model after strategy search.
+ml_regression_robust,rf,regression,boruta_onchain,12.366958010858093,sign_band_0.0025,0.8797486376323729,quantile_long_only_0.20,2018-03-17,More conservative regression baseline with strong Sharpe.
+dl_regression_primary,tcn,regression,boruta_onchain,89.72090887891618,sign_band_0.0025,1.0465200415298552,sign_band_0.0025,2018-03-17,Highest return ceiling in current OOS study; treat as high-upside but training-sensitive.
+dl_classification_primary,tcn,classification,boruta_onchain,7.172919202152446,long_only_band_0.01,0.9630216973919195,quantile_long_only_0.10,2018-03-17,Most useful DL classification reference; Sharpe-oriented strategy is stronger than raw return winner.
+dl_regression_support,lstm,regression,boruta_onchain,22.970444897145472,sign_band_0.0025,0.7578745071166194,quantile_long_only_0.20,2018-03-17,Secondary DL regression model with lower upside than TCN but easier interpretation.

@@ -25,9 +25,9 @@ Typical workflow:
 Key output locations:
   data/features/                  model metrics, predictions, equity curves
   models_saved/                   final fitted models for reuse / latest inference
-  reports/summary/                experiment summaries, tuning tables, stability studies
-  reports/figures/                generated PDF figures
-  reports/trading/                interactive HTML trading charts
+  reports/experiments/            per-run figures, charts, markdown summaries
+  reports/summary/                aggregated tables, tuning tables, stability studies
+  reports/demos/                  copied showcase-ready figures and charts
 
 Common selector semantics:
   --model
@@ -2935,8 +2935,13 @@ def report(
     exp_name = exp_cfg["experiment_name"]
     prefix = _artifact_prefix(exp_cfg)
     symbol = exp_cfg.get("symbol", "BTC-USD")
-    fig_dir = Path(exp_cfg.get("output", {}).get("figures_dir", "reports/figures"))
-    trd_dir = Path(exp_cfg.get("output", {}).get("trading_dir", "reports/trading"))
+    fig_dir = Path(exp_cfg.get("output", {}).get("figures_dir", "reports/experiments/figures"))
+    trd_dir = Path(exp_cfg.get("output", {}).get("trading_dir", "reports/experiments/trading"))
+    rpt_dir = Path(
+        exp_cfg.get("output", {}).get(
+            "report_summaries_dir", "reports/experiments/summaries"
+        )
+    )
     strat_cfg = exp_cfg.get("strategy", {})
     task_name = _resolve_task(task, exp_cfg, data_cfg)
     resolved_model_name = _resolve_selected_model(model_name, exp_cfg)
@@ -3026,8 +3031,8 @@ def report(
             )
         )
 
-    Path("reports").mkdir(exist_ok=True)
-    summary_path = Path(f"reports/{prefix}_summary_{resolved_model_name}_{task_name}_{variant_name}.md")
+    rpt_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = rpt_dir / f"{prefix}_summary_{resolved_model_name}_{task_name}_{variant_name}.md"
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(f"# Crypto Predict — Summary Report\n\n")
         f.write(f"**Experiment**: `{exp_name}`  \n")

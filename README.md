@@ -40,6 +40,22 @@
 - 副线：方向预测
 - 重点特征集：`boruta_onchain`
 
+## 当前阶段结果
+
+| 维度 | 当前代表结果 | 说明 |
+| --- | --- | --- |
+| 分类稳健主线 | `rf + classification + boruta_onchain` | 当前 `ML classification` 主基线，稳健性最好 |
+| 分类收益对照 | `xgboost + classification + boruta_onchain` | 分类任务中收益上限较高的 `ML` 对照 |
+| 回归 `ML` 主线 | `svm + regression + boruta_onchain` | 当前传统模型里最强的回归收益候选之一 |
+| 回归 `DL` 主线 | `tcn + regression + boruta_onchain` | 当前收益上限最高的 `DL` 候选之一 |
+| 核心特征主线 | `boruta_onchain` | 当前最稳定、最值得围绕论文展开的特征版本 |
+
+当前结果更适合概括为：
+
+- 分类任务中 `ML` 整体更稳
+- 回归任务中部分 `DL` 模型收益上限更高
+- 预测最优、方向最优与收益最优并不总是一致
+
 ## 快速开始
 
 ### 1. 数据准备
@@ -124,21 +140,13 @@ python -m src.cli experiment-summary --config configs/experiment.yaml --cost-bps
 
 ### `--model`
 
-机器学习模型：
+机器学习模型：`ridge, lasso, svm, rf, lgbm, xgboost`  
+深度学习模型：`lstm, cnn_lstm, gru, tcn`
 
-- `ridge`
-- `lasso`
-- `svm`
-- `rf`
-- `lgbm`
-- `xgboost`
+说明：
 
-深度学习模型：
-
-- `lstm`
-- `cnn_lstm`
-- `gru`
-- `tcn`
+- `xgboost` 和 `lgbm` 都属于机器学习中的梯度提升树模型，不属于深度学习
+- `lasso` 和 `ridge` 当前仅用于回归任务
 
 ### `--task`
 
@@ -168,36 +176,31 @@ python -m src.cli experiment-summary --config configs/experiment.yaml --cost-bps
 
 调参与主实验：
 
-- [`scripts/run_core_experiments.ps1`](scripts/run_core_experiments.ps1)
+- [`scripts/run_ml_fixed_experiments.ps1`](scripts/run_ml_fixed_experiments.ps1)
+- [`scripts/run_dl_fixed_experiments.ps1`](scripts/run_dl_fixed_experiments.ps1)
 - [`scripts/run_ml_tuning_full.ps1`](scripts/run_ml_tuning_full.ps1)
 - [`scripts/run_dl_tuning_full.ps1`](scripts/run_dl_tuning_full.ps1)
 
 减半周期 / 策略空间稳定性：
 
-- [`scripts/run_ml_halving_strategy_full.ps1`](scripts/run_ml_halving_strategy_full.ps1)
-- [`scripts/run_dl_halving_strategy_full.ps1`](scripts/run_dl_halving_strategy_full.ps1)
+- [`scripts/run_ml_strategy_stability_full.ps1`](scripts/run_ml_strategy_stability_full.ps1)
+- [`scripts/run_dl_strategy_stability_full.ps1`](scripts/run_dl_strategy_stability_full.ps1)
 
 示例：
 
 ```powershell
 .\scripts\run_ml_tuning_full.ps1 -Models rf,xgboost,lgbm -Trials 20
-.\scripts\run_dl_halving_strategy_full.ps1 -Models 'lstm','cnn_lstm','gru','tcn' -Tasks 'classification','regression' -Variants 'boruta_onchain','onchain' -CostBps 5 -PredictionScope oos
+.\scripts\run_dl_strategy_stability_full.ps1 -Models 'lstm','cnn_lstm','gru','tcn' -Tasks 'classification','regression' -Variants 'boruta_onchain','onchain' -CostBps 5 -PredictionScope oos
 ```
 
 ## 输出目录
 
-- `data/features/`
-  - 特征集、预测结果、指标 JSON、回测产物
-- `models_saved/`
-  - 最终模型与元信息
-- `reports/summary/`
-  - 汇总表、调参结果、稳定性分析、最新预测
-- `reports/figures/`
-  - `Equity / Drawdown / Pred vs Actual` 图
-- `reports/trading/`
-  - 交互式交易图
-- `reports/batch_runs/`
-  - 批量实验日志
+- `data/features/`：特征集、预测结果、指标 JSON、回测产物
+- `models_saved/`：最终模型与元信息
+- `reports/summary/`：汇总表、调参结果、稳定性分析、最新预测
+- `reports/experiments/`：正式实验的图表、交易图、Markdown 报告
+- `reports/demos/`：演示/录视频用的展示副本
+- `reports/batch_runs/`：批量实验日志
 
 ## 研究主线
 
@@ -230,5 +233,4 @@ python -m src.cli experiment-summary --config configs/experiment.yaml --cost-bps
 
 - 本项目是 `paper-guided`，不是对参考论文的逐项严格复现
 - 当前最强结果不代表所有市场周期都同样有效
-- `test-full-history` 结果不能替代严格 `OOS`
 - 深度学习模型对训练路径更敏感，解释结果时应结合稳健性分析

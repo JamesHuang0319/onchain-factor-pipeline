@@ -1970,8 +1970,9 @@ tuning:
           objective_value: 0.026775527417586053
           updated_at_utc: '2026-04-09T19:18:12.995341+00:00'
 output:
-  figures_dir: reports/figures
-  trading_dir: reports/trading
+  figures_dir: reports/experiments/figures
+  trading_dir: reports/experiments/trading
+  report_summaries_dir: reports/experiments/summaries
   model_dir: models_saved
   summary_dir: reports/summary
   registry_file: reports/experiment_registry.csv
