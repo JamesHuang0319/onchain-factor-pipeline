@@ -1,236 +1,103 @@
-# crypto_predict
+# 基于链上数据的比特币收益预测研究
 
-基于链上数据的 BTC 收益预测研究项目。仓库已经形成一条完整、可复现的研究流水线，覆盖数据下载、特征构建、特征筛选、时间序列训练、回测、报告生成、实验汇总、稳健性分析和最新样本预测。
+本仓库为本科毕业论文“基于链上数据的加密货币收益预测模型研究”的实验项目。项目围绕比特币日频收益预测问题，构建了从多源数据采集、特征工程、样本外预测到交易回测的完整研究流水线，用于检验链上数据在统计预测和经济价值两个层面是否具有增量作用。
 
-## 项目简介
+项目并不是面向实盘交易的策略系统，而是服务于论文研究的可复现实验框架。所有正式实验均围绕统一的数据边界、特征版本、模型集合和样本外验证规则展开，以保证不同模型和不同信息结构之间具有一致的比较基础。
 
-- 研究对象：`BTC-USD`
-- 频率：`日频`
-- 主数据源：`Coin Metrics Community API`
-- 兼容数据源：`Blockchain.com`
-- 当前任务：
-  - `classification`：预测次日涨跌方向 `direction_h`
-  - `regression`：预测次日对数收益率 `log_ret_h`
-- 当前核心特征主线：`boruta_onchain`
+## 研究设计
 
-项目定位是论文研究流水线，不是纯策略工程仓库。当前重点是比较：
+| 维度 | 设定 |
+| --- | --- |
+| 研究对象 | `BTC-USD` |
+| 数据频率 | 日频 |
+| 价格数据 | Yahoo Finance |
+| 链上数据 | Coin Metrics Community API，兼容 Blockchain.com |
+| 分类任务 | 预测次日涨跌方向 `direction_h` |
+| 回归任务 | 预测次日对数收益率 `log_ret_h` |
+| 验证方式 | 时间序列样本外验证，采用 walk-forward 划分 |
 
-- 链上因子是否具有增量价值
-- 方向预测与幅度预测哪条线更适合交易
-- `ML` 与 `DL` 在统一 `OOS` 框架下谁更稳、谁上限更高
+特征体系包括价格与技术面特征、链上衍生特征以及比特币减半周期特征。为比较不同信息来源的作用，实验进一步构造了 `onchain`、`ta`、`all`、`boruta_onchain`、`boruta_ta`、`boruta_all` 和 `univariate` 等数据集变体。
 
-## 当前状态
+## 方法框架
 
-已实现能力：
+整体实验流程可以概括为：
 
-- 数据下载：价格数据 + 链上数据
-- 特征工程：价格、TA、链上因子与派生比值/变化率特征
-- 特征筛选：`Boruta-like RF importance + Lasso/L1` 两阶段筛选
-- 时间序列训练：`walk-forward`
-- 自动回测、图表生成、Markdown 报告
-- 最终模型保存与最新样本预测
-- 实验总表自动汇总
-- 固定减半周期稳健性分析
-- 固定策略空间搜索
-- `ML / DL` 批量调参与批量稳定性脚本
+```text
+数据采集 → 清洗对齐 → 特征工程 → 特征筛选 → 模型训练 → 样本外预测 → 交易回测 → 结果汇总
+```
 
-当前论文主线建议：
+模型体系分为机器学习模型和深度学习模型两类。机器学习模型包括 `Ridge`、`Lasso`、`SVM/SVR`、`Random Forest`、`LightGBM` 和 `XGBoost`；深度学习模型包括 `LSTM`、`CNN-LSTM`、`GRU` 和 `TCN`。不同模型共享同一批基础特征来源，但深度学习模型会进一步基于时间窗口重构序列输入。
 
-- 主线：经济价值 / 交易收益
-- 副线：方向预测
-- 重点特征集：`boruta_onchain`
+## 快速复现
 
-## 当前阶段结果
+安装依赖后，先完成数据与特征准备：
 
-| 维度 | 当前代表结果 | 说明 |
-| --- | --- | --- |
-| 分类稳健主线 | `rf + classification + boruta_onchain` | 当前 `ML classification` 主基线，稳健性最好 |
-| 分类收益对照 | `xgboost + classification + boruta_onchain` | 分类任务中收益上限较高的 `ML` 对照 |
-| 回归 `ML` 主线 | `svm + regression + boruta_onchain` | 当前传统模型里最强的回归收益候选之一 |
-| 回归 `DL` 主线 | `tcn + regression + boruta_onchain` | 当前收益上限最高的 `DL` 候选之一 |
-| 核心特征主线 | `boruta_onchain` | 当前最稳定、最值得围绕论文展开的特征版本 |
-
-当前结果更适合概括为：
-
-- 分类任务中 `ML` 整体更稳
-- 回归任务中部分 `DL` 模型收益上限更高
-- 预测最优、方向最优与收益最优并不总是一致
-
-## 快速开始
-
-### 1. 数据准备
-
-```bash
+```powershell
 python -m src.cli download-data --config configs/experiment.yaml
 python -m src.cli build-features --config configs/experiment.yaml
 python -m src.cli data-audit --config configs/experiment.yaml --dataset-variant all
 python -m src.cli validate --config configs/experiment.yaml
 ```
 
-### 2. 单组实验
+单组实验按照 `train → backtest → report` 的顺序执行：
 
-```bash
-python -m src.cli tune --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
+```powershell
 python -m src.cli train --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
 python -m src.cli backtest --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
 python -m src.cli report --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain
 ```
 
-### 3. 查看调参候选集
-
-```bash
-python -m src.cli show-search-space --model rf --task classification
-python -m src.cli show-search-space --model tcn --task regression
-```
-
-导出成 Markdown：
-
-```bash
-python -m src.cli show-search-space --out reports/summary/tuning_search_spaces.md
-```
-
-### 4. 稳健性与策略映射
-
-```bash
-python -m src.cli halving-strategy-study --config configs/experiment.yaml --model rf --task classification --dataset-variant boruta_onchain --cost-bps 5 --prediction-scope oos
-```
-
-### 5. 最新样本预测
-
-```bash
-python -m src.cli predict-latest --config configs/experiment.yaml --model rf --task regression --dataset-variant boruta_onchain
-```
-
-### 6. 刷新实验总表
-
-```bash
-python -m src.cli experiment-summary --config configs/experiment.yaml --cost-bps 5
-```
-
-## CLI 常用命令
-
-- `download-data`
-  - 下载价格和链上数据，带缓存
-- `build-features`
-  - 构建完整特征数据集
-- `data-audit`
-  - 输出样本覆盖、标签分布、训练集划分摘要
-- `validate`
-  - 运行防泄漏检查
-- `show-search-space`
-  - 查看每个模型/任务的调参候选集
-- `tune`
-  - 随机搜索超参数，并可自动触发 `train/backtest/report`
-- `train`
-  - 运行 `walk-forward OOS` 训练并保存预测
-- `backtest`
-  - 对已保存预测执行回测
-- `report`
-  - 生成 PDF 图表和 Markdown 报告
-- `predict-latest`
-  - 用最终模型预测最新样本
-- `test-full-history`
-  - 用保存的最终模型对完整历史重新打分
-- `halving-strategy-study`
-  - 固定模型，搜索策略映射并做减半周期稳健性分析
-- `experiment-summary`
-  - 汇总当前实验产物，形成总表
-
-## 公共参数说明
-
-### `--model`
-
-机器学习模型：`ridge, lasso, svm, rf, lgbm, xgboost`  
-深度学习模型：`lstm, cnn_lstm, gru, tcn`
-
-说明：
-
-- `xgboost` 和 `lgbm` 都属于机器学习中的梯度提升树模型，不属于深度学习
-- `lasso` 和 `ridge` 当前仅用于回归任务
-
-### `--task`
-
-- `classification`
-  - 方向预测，目标列是 `direction_h`
-- `regression`
-  - 幅度预测，目标列是 `log_ret_h`
-
-### `--dataset-variant`
-
-- `onchain`
-  - 原始链上特征
-- `ta`
-  - 价格 / TA / 日历结构特征
-- `all`
-  - 全部特征
-- `boruta_onchain`
-  - 筛选后的链上特征
-- `boruta_ta`
-  - 筛选后的 TA / 时间结构特征
-- `boruta_all`
-  - 筛选后的全特征集
-- `univariate`
-  - 单变量价格基线
-
-## 批量脚本
-
-调参与主实验：
-
-- [`scripts/run_ml_fixed_experiments.ps1`](scripts/run_ml_fixed_experiments.ps1)
-- [`scripts/run_dl_fixed_experiments.ps1`](scripts/run_dl_fixed_experiments.ps1)
-- [`scripts/run_ml_tuning_full.ps1`](scripts/run_ml_tuning_full.ps1)
-- [`scripts/run_dl_tuning_full.ps1`](scripts/run_dl_tuning_full.ps1)
-
-减半周期 / 策略空间稳定性：
-
-- [`scripts/run_ml_strategy_stability_full.ps1`](scripts/run_ml_strategy_stability_full.ps1)
-- [`scripts/run_dl_strategy_stability_full.ps1`](scripts/run_dl_strategy_stability_full.ps1)
-
-示例：
+若需要补齐全部模型、任务和数据集变体的实验产物，可运行安全补跑脚本。该脚本会自动跳过已有完整结果，只补缺失的预测、回测或报告。
 
 ```powershell
-.\scripts\run_ml_tuning_full.ps1 -Models rf,xgboost,lgbm -Trials 20
-.\scripts\run_dl_strategy_stability_full.ps1 -Models 'lstm','cnn_lstm','gru','tcn' -Tasks 'classification','regression' -Variants 'boruta_onchain','onchain' -CostBps 5 -PredictionScope oos
+powershell -ExecutionPolicy Bypass -File scripts\run_full_matrix_safe.ps1 -ContinueOnError
 ```
 
-## 输出目录
+更多实验命令见 [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)。
 
-- `data/features/`：特征集、预测结果、指标 JSON、回测产物
-- `models_saved/`：最终模型与元信息
-- `reports/summary/`：汇总表、调参结果、稳定性分析、最新预测
-- `reports/experiments/`：正式实验的图表、交易图、Markdown 报告
-- `reports/demos/`：演示/录视频用的展示副本
-- `reports/batch_runs/`：批量实验日志
+## 实验监控
 
-## 研究主线
+项目提供本地 Dashboard 用于查看实验进度、产物完整度、任务矩阵和代表性结果排名。
 
-当前最值得聚焦的问题是：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\serve_experiment_dashboard.ps1
+```
 
-1. `boruta_onchain` 相对原始链上特征是否更稳定
-2. 分类与回归信号，哪一种更容易转化为收益
-3. `ML` 与 `DL` 在统一 `OOS` 和统一策略空间下谁更稳、谁上限更高
+启动后访问：
 
-当前仓库里的结果已经表明：
+```text
+http://127.0.0.1:8765/dashboard.html
+```
 
-- 分类任务通常是 `ML` 更稳
-- 回归任务中，部分 `DL` 模型具有更高收益上限
-- 不能只看 `F1 / RMSE`，还必须结合：
-  - `cumulative return`
-  - `Sharpe`
-  - `max drawdown`
-  - 成本敏感性
-  - 分周期稳健性
+Dashboard 主要用于辅助实验补跑和结果检查，不作为论文正文结果来源。论文中使用的正式结果应以 `reports/summary/`、`reports/experiments/` 和最终整理后的表格为准。
+
+## 输出与论文对应关系
+
+| 论文部分 | 对应项目内容 |
+| --- | --- |
+| 第 3 章 数据来源与研究设计 | `src/ingest/`、`src/features/`、`src/datasets/`、`configs/` |
+| 第 4 章 预测模型构建与实验实现 | `src/models/`、`src/evaluation/`、`src/cli.py` |
+| 第 5 章 预测结果分析 | `data/features/*_metrics.json`、`reports/summary/` |
+| 第 6 章 交易策略与经济价值分析 | `data/features/*_backtest_sensitivity.csv`、`reports/experiments/` |
+| 第 7 章 结论与展望 | 第 5、6 章结果汇总与局限性讨论 |
+
+主要输出目录包括：
+
+- `data/features/`：特征集、样本外预测、预测指标和回测中间产物。
+- `models_saved/`：最终模型与模型元信息。
+- `reports/summary/`：实验汇总表、调参记录、稳健性分析和论文候选表格。
+- `reports/experiments/`：单组实验图表、交易图和 Markdown 摘要。
+- `reports/supplement_runs/`：全矩阵补跑日志、批次摘要和本地 Dashboard 文件。
+
+更完整的目录说明见 [docs/REPO_LAYOUT.md](docs/REPO_LAYOUT.md)。
 
 ## 文档入口
 
-- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
-- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md)
-- [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md)
-- [`docs/THESIS_NOTES.md`](docs/THESIS_NOTES.md)
-- [`docs/REPO_LAYOUT.md`](docs/REPO_LAYOUT.md)
+- [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)：实验命令与批量运行说明。
+- [docs/REPO_LAYOUT.md](docs/REPO_LAYOUT.md)：项目目录与产物结构。
+- [docs/THESIS_NOTES.md](docs/THESIS_NOTES.md)：论文写作提示、结果组织和风险说明。
+- [docs/METHODOLOGY.md](docs/METHODOLOGY.md)：方法设计与实验规范说明。
 
 ## 说明
 
-- 本项目是 `paper-guided`，不是对参考论文的逐项严格复现
-- 当前最强结果不代表所有市场周期都同样有效
-- 深度学习模型对训练路径更敏感，解释结果时应结合稳健性分析
+本项目用于学术研究和论文写作，不构成任何投资建议。由于链上数据覆盖、模型训练路径和市场阶段差异均可能影响实验结果，最终结论应以样本外预测、回测表现和稳健性分析的综合结果为依据。
